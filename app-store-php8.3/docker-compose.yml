@@ -1,0 +1,28 @@
+version: '3.8'
+services:
+  storefront:
+    build:
+      context: ./storefront
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+    environment:
+      - DB_PATH=/app/data/storefront.db
+      - PAYMENT_BASE_URL=http://payment:8080
+      - LOG_PATH=/app/logs/storefront.log
+    volumes:
+      - ./storefront/data:/app/data
+      - ./storefront/logs:/app/logs
+    depends_on:
+      - payment
+
+  payment:
+    build:
+      context: ./payment
+      dockerfile: Dockerfile
+    ports:
+      - "8081:80"
+    environment:
+      - LOG_PATH=/app/logs/payment.log
+    volumes:
+      - ./payment/logs:/app/logs
