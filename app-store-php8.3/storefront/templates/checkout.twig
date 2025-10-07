@@ -1,0 +1,16 @@
+{% extends "base.twig" %}
+
+{% block title %}Checkout{% endblock %}
+
+{% block content %}
+<h2>Checkout</h2>
+<p>Total: ${{ (cart.totals.amount / 100)|number_format(2) }}</p>
+<form method="post" action="/checkout">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="mb-3">
+        <label for="card_last4" class="form-label">Card Last 4 Digits</label>
+        <input type="text" class="form-control" id="card_last4" name="card_last4" placeholder="4242" required>
+    </div>
+    <button type="submit" class="btn btn-success">Complete Payment</button>
+</form>
+{% endblock %}

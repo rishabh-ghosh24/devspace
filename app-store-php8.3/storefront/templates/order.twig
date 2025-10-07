@@ -1,0 +1,11 @@
+{% extends "base.twig" %}
+
+{% block title %}Order Details{% endblock %}
+
+{% block content %}
+<h2>Order #{{ order.order_id }}</h2>
+<p>Status: {{ order.status }}</p>
+<p>Total: ${{ (order.total_amount / 100)|number_format(2) }}</p>
+<p>Created: {{ order.created_at }}</p>
+<a href="/products" class="btn btn-primary">Continue Shopping</a>
+{% endblock %}

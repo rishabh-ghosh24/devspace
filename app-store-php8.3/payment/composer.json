@@ -1,0 +1,10 @@
+{
+  "name": "demo/payment",
+  "type": "project",
+  "require": {
+    "slim/slim": "^4",
+    "slim/psr7": "^1",
+    "monolog/monolog": "^3"
+  },
+  "autoload": { "psr-4": { "Pay\\": "src/" } }
+}
