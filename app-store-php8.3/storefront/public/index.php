@@ -132,7 +132,7 @@ $app->post('/cart', function(Request $req, Response $res) use ($db) {
     $db->prepare("DELETE FROM cart_items WHERE cart_id=? AND product_id=?")->execute([$cartId, $pid]);
   } else {
     $db->prepare("INSERT INTO cart_items(cart_id,product_id,qty) VALUES(?,?,?)
-                  ON CONFLICT(cart_id,product_id) DO UPDATE SET qty=excluded.qty")
+                  ON CONFLICT(cart_id,product_id) DO UPDATE SET qty = qty + excluded.qty")
        ->execute([$cartId,$pid,$qty]);
   }
 
@@ -206,6 +206,11 @@ $app->post('/checkout', function(Request $req, Response $res) use ($db, $env, $t
     $payment = json_decode((string)$resp->getBody(), true);
     if (($payment['status'] ?? '') === 'APPROVED') {
       $db->prepare("UPDATE orders SET status='PAID' WHERE id=?")->execute([$orderId]);
+      // Update stock
+      foreach ($rows as $item) {
+        $db->prepare("UPDATE products SET stock = stock - ? WHERE id = ?")
+           ->execute([$item['qty'], $item['product_id']]);
+      }
       $log->info('checkout_success', ['order_id' => $orderId, 'total' => $totalAmt]);
       $order = ['order_id'=>$orderId,'status'=>'PAID','total_amount'=>$totalAmt,'created_at'=>gmdate('c')];
       $res->getBody()->write(renderTwig($twig, 'order.twig', ['order' => $order]));

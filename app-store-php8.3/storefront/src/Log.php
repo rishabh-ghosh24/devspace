@@ -14,7 +14,12 @@ final class Log {
       $record['extra']['service'] = $service;
       $record['extra']['timestamp'] = gmdate('c');
       $record['extra']['user_id'] = \App\Auth::getUserId();
-      if (function_exists('opentelemetry_get_trace_id')) {
+      // Workaround for trace context without PECL extension
+      if (isset($_SERVER['HTTP_TRACEPARENT'])) {
+        $parts = explode('-', $_SERVER['HTTP_TRACEPARENT']);
+        $record['extra']['trace_id'] = $parts[1] ?? null;
+        $record['extra']['span_id'] = $parts[2] ?? null;
+      } elseif (function_exists('opentelemetry_get_trace_id')) {
         $record['extra']['trace_id'] = opentelemetry_get_trace_id() ?: null;
         $record['extra']['span_id']  = function_exists('opentelemetry_get_span_id') ? opentelemetry_get_span_id() : null;
       }
