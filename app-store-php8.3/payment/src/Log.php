@@ -3,6 +3,7 @@ namespace Pay;
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
 use Monolog\Formatter\JsonFormatter;
+use Monolog\LogRecord;
 
 final class Log {
   public static function create(string $service, string $path): Logger {
@@ -10,7 +11,7 @@ final class Log {
     $h = new StreamHandler($path, Logger::DEBUG, true, 0644);
     $h->setFormatter(new JsonFormatter());
     $log->pushHandler($h);
-    $log->pushProcessor(function(array $record) use ($service){
+    $log->pushProcessor(function(LogRecord $record) use ($service){
       $record['extra']['service'] = $service;
       $record['extra']['timestamp'] = gmdate('c');
       // Workaround for trace context without PECL extension
