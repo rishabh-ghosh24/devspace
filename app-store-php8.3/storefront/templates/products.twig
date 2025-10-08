@@ -3,28 +3,30 @@
 {% block title %}Products{% endblock %}
 
 {% block content %}
-<h2>Products</h2>
-<div class="row">
-    {% for product in products %}
-    <div class="col-md-4 mb-4">
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">{{ product.name }}</h5>
-                <p class="card-text">Price: ${{ (product.price / 100)|number_format(2) }}</p>
-                <p class="card-text">Stock: {{ product.stock }}</p>
-                <button class="btn btn-primary add-to-cart" data-product-id="{{ product.id }}">Add to Cart</button>
+<div class="container mt-4">
+    <h1>Products</h1>
+    <div class="row">
+        {% for product in products %}
+        <div class="col-md-4 mb-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">{{ product.name }}</h5>
+                    <p class="card-text">${{ product.price / 100 }}</p>
+                    <p class="card-text">Stock: {{ product.stock }}</p>
+                    <button class="btn btn-primary add-to-cart" data-product-id="{{ product.id }}">Add to Cart</button>
+                </div>
             </div>
         </div>
+        {% endfor %}
     </div>
-    {% endfor %}
+    <a href="/cart" class="btn btn-secondary">View Cart</a>
 </div>
-{% endblock %}
 
-{% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('.add-to-cart').forEach(button => {
-        button.addEventListener('click', function() {
+        button.addEventListener('click', function(event) {
+            event.preventDefault();
             const productId = this.getAttribute('data-product-id');
             fetch('/cart', {
                 method: 'POST',

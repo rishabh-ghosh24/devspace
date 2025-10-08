@@ -21,16 +21,10 @@
             <tr>
                 <td>{{ item.name }}</td>
                 <td>${{ item.price / 100 }}</td>
-                <td>
-                    <form method="post" action="/cart" style="display: inline;">
-                        <input type="hidden" name="product_id" value="{{ item.product_id }}">
-                        <input type="number" name="qty" value="{{ item.qty }}" min="0" style="width: 60px;">
-                        <button type="submit" class="btn btn-sm btn-secondary">Update</button>
-                    </form>
-                </td>
+                <td>{{ item.qty }}</td>
                 <td>${{ (item.price * item.qty) / 100 }}</td>
                 <td>
-                    <button class="btn btn-sm btn-danger remove-from-cart" data-product-id="{{ item.product_id }}">Remove</button>
+                    <button class="btn btn-sm btn-danger remove-from-cart" data-product-id="{{ item.product_id }}" data-current-qty="{{ item.qty }}">Remove</button>
                 </td>
             </tr>
             {% endfor %}
@@ -50,15 +44,13 @@
     <a href="/products" class="btn btn-secondary">Continue Shopping</a>
 </div>
 
-{% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('.remove-from-cart').forEach(button => {
-        button.addEventListener('click', function() {
+        button.addEventListener('click', function(event) {
+            event.preventDefault();
             const productId = this.getAttribute('data-product-id');
-            const row = this.closest('tr');
-            const qtyInput = row.querySelector('input[name="qty"]');
-            const currentQty = parseInt(qtyInput.value);
+            const currentQty = parseInt(this.getAttribute('data-current-qty'));
             const newQty = Math.max(0, currentQty - 1);
             fetch('/cart', {
                 method: 'POST',
@@ -78,5 +70,4 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 </script>
-{% endblock %}
 {% endblock %}
