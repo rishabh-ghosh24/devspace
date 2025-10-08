@@ -132,7 +132,7 @@ $app->post('/cart', function(Request $req, Response $res) use ($db) {
     $db->prepare("DELETE FROM cart_items WHERE cart_id=? AND product_id=?")->execute([$cartId, $pid]);
   } else {
     $db->prepare("INSERT INTO cart_items(cart_id,product_id,qty) VALUES(?,?,?)
-                  ON CONFLICT(cart_id,product_id) DO UPDATE SET qty = qty + excluded.qty")
+                  ON CONFLICT(cart_id,product_id) DO UPDATE SET qty = excluded.qty")
        ->execute([$cartId,$pid,$qty]);
   }
 
