@@ -1,6 +1,9 @@
-# appstore-php8.3 (Phase 1 - MVP)
+# appstore-php8.3 (MVP)
 
-Lightweight PHP 8.3 storefront built with Slim 4, Plates templating, and SQLite. This MVP provides a realistic e-commerce flow without any APM or Logging Analytics instrumentation.
+Lightweight PHP 8.3 storefront built with Slim 4, Plates templating, and SQLite. 
+This MVP provides a realistic but very simple e-commerce flow that can be used to setup for various testing use cases.
+
+In my case, I want to monitor a PHP8+ app with Oracle Application Performance Monitoring (APM) and OTel with auto-instrumentation suport for collecting application traces and hence I built this demo app. Further, logs will be collected and analyzed using OCI Log Analytics (LA) but these monitoring parts will not be included here. Instead, they will be added under a separate project named **appstore-php8.3-observability**.
 
 Features:
 - Demo login (admin / demo123) using SQLite
