@@ -1,0 +1,13 @@
+/vendor/
+/composer.lock
+
+# Runtime artifacts
+/database/appstore.db
+/logs/*
+!/logs/.gitkeep
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
