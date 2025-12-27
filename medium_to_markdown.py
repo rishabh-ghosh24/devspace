@@ -154,21 +154,58 @@ def convert_element_to_markdown(element) -> str:
             items.append(f"{i}. {item_text}")
         return "\n" + "\n".join(items) + "\n"
 
-    # Images
+    # Images - Medium uses various lazy-loading attributes
     if tag == 'img':
-        src = element.get('src', '')
+        # Try multiple possible image source attributes (Medium lazy-loading)
+        src = (element.get('src') or
+               element.get('data-src') or
+               element.get('data-delayed-url') or
+               element.get('data-image-id') or '')
+
+        # Skip tiny placeholder/tracking images
+        if 'miro.medium.com' in src and '/max/' not in src and '/fit/' not in src:
+            # Try to find higher resolution version
+            pass
+
+        # Skip base64 placeholder images
+        if src.startswith('data:'):
+            src = element.get('data-src', '')
+
         alt = element.get('alt', 'image')
-        if src:
+        if src and not src.endswith('.gif'):  # Skip tracking pixels
             return f"\n![{alt}]({src})\n"
         return ""
 
     # Figure (often contains images on Medium)
     if tag == 'figure':
         img = element.find('img')
+        # Also check for picture > source elements (responsive images)
+        picture = element.find('picture')
+        if picture:
+            source = picture.find('source')
+            if source:
+                srcset = source.get('srcset', '')
+                if srcset:
+                    # Get the highest resolution from srcset
+                    src = srcset.split(',')[-1].strip().split(' ')[0]
+                    alt = img.get('alt', '') if img else ''
+                    caption = element.find('figcaption')
+                    if caption:
+                        alt = caption.get_text(strip=True)
+                    result = f"\n![{alt}]({src})\n"
+                    if caption:
+                        result += f"*{caption.get_text(strip=True)}*\n"
+                    return result
+
         caption = element.find('figcaption')
         result = ""
         if img:
-            src = img.get('src', img.get('data-src', ''))
+            src = (img.get('src') or
+                   img.get('data-src') or
+                   img.get('data-delayed-url') or '')
+            # Skip base64 placeholders
+            if src.startswith('data:'):
+                src = img.get('data-src', '')
             alt = img.get('alt', '')
             if caption:
                 alt = caption.get_text(strip=True)
