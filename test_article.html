@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="author" content="Rishabh Ghosh">
+    <title>Enable OCI Ops Insight on Oracle Autonomous Database Serverless</title>
+</head>
+<body>
+<article>
+    <h1>Enable OCI Ops Insight on Oracle Autonomous Database Serverless</h1>
+    <time datetime="2024-03-15">March 15, 2024</time>
+
+    <p>Oracle Cloud Infrastructure (OCI) <strong>Ops Insights</strong> provides comprehensive monitoring and analytics for your autonomous databases. This guide walks you through enabling it.</p>
+
+    <h2>Prerequisites</h2>
+    <p>Before you begin, ensure you have:</p>
+    <ul>
+        <li>An active OCI tenancy with appropriate permissions</li>
+        <li>An Autonomous Database Serverless instance</li>
+        <li>Access to the OCI Console</li>
+    </ul>
+
+    <h2>Step 1: Navigate to Ops Insights</h2>
+    <p>Go to the <a href="https://cloud.oracle.com">OCI Console</a> and find <em>Ops Insights</em> under the Observability menu.</p>
+
+    <h2>Step 2: Enable Database Insights</h2>
+    <p>Click on the database and run the following command:</p>
+    <pre><code class="language-sql">BEGIN
+    DBMS_CLOUD_OCI_OBSERVABILITY.ENABLE_DATABASE_INSIGHT(
+        compartment_id => 'ocid1.compartment.oc1..example'
+    );
+END;
+/</code></pre>
+
+    <blockquote>
+        <p>Note: This process may take a few minutes to complete. Be patient!</p>
+    </blockquote>
+
+    <h2>Step 3: Verify Setup</h2>
+    <p>You can verify the setup by checking the <code>DBA_OCI_INSIGHTS</code> view:</p>
+    <pre><code class="language-sql">SELECT * FROM DBA_OCI_INSIGHTS WHERE status = 'ENABLED';</code></pre>
+
+    <figure>
+        <img src="https://miro.medium.com/example-image.png" alt="OCI Console Screenshot">
+        <figcaption>The Ops Insights dashboard showing database metrics</figcaption>
+    </figure>
+
+    <h2>Benefits of Ops Insights</h2>
+    <ol>
+        <li>Real-time performance monitoring</li>
+        <li>Historical trend analysis</li>
+        <li>Capacity planning recommendations</li>
+        <li>SQL performance analytics</li>
+    </ol>
+
+    <hr>
+
+    <h2>Conclusion</h2>
+    <p>Ops Insights is a powerful tool for managing your <strong>Autonomous Database</strong>. With proper setup, you'll gain valuable insights into your database performance and capacity needs.</p>
+
+    <p>For more information, check the <a href="https://docs.oracle.com/en-us/iaas/ops-insights/home.htm">official documentation</a>.</p>
+</article>
+</body>
+</html>
