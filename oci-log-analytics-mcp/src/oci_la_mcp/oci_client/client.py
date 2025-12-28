@@ -1,6 +1,6 @@
 """OCI Log Analytics client wrapper."""
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
 
 import oci
@@ -89,12 +89,18 @@ class OCILogAnalyticsClient:
         time_start_dt = datetime.fromisoformat(time_start.replace("Z", "+00:00"))
         time_end_dt = datetime.fromisoformat(time_end.replace("Z", "+00:00"))
 
+        # Create TimeRange object for time_filter parameter
+        time_range = oci.log_analytics.models.TimeRange(
+            time_start=time_start_dt,
+            time_end=time_end_dt,
+            time_zone="UTC",
+        )
+
         query_details = oci.log_analytics.models.QueryDetails(
             compartment_id=self._compartment_id,
             query_string=query_string,
             sub_system=oci.log_analytics.models.QueryDetails.SUB_SYSTEM_LOG,
-            time_start=time_start_dt,
-            time_end=time_end_dt,
+            time_filter=time_range,
             max_total_count=max_results,
         )
 
@@ -182,11 +188,35 @@ class OCILogAnalyticsClient:
                 "name": s.name,
                 "display_name": getattr(s, "display_name", s.name),
                 "description": getattr(s, "description", ""),
-                "entity_types": getattr(s, "entity_types", []) or [],
+                "entity_types": self._serialize_entity_types(getattr(s, "entity_types", None)),
                 "is_system": getattr(s, "is_system", False),
             }
             for s in sources
         ]
+
+    def _serialize_entity_types(self, entity_types: Any) -> List[str]:
+        """Serialize entity types to JSON-compatible list of strings.
+
+        Args:
+            entity_types: Entity types from OCI SDK (may be objects or None).
+
+        Returns:
+            List of entity type names as strings.
+        """
+        if entity_types is None:
+            return []
+
+        result = []
+        for et in entity_types:
+            if hasattr(et, "name"):
+                result.append(et.name)
+            elif hasattr(et, "entity_type_name"):
+                result.append(et.entity_type_name)
+            elif isinstance(et, str):
+                result.append(et)
+            else:
+                result.append(str(et))
+        return result
 
     async def list_fields(self, source_name: Optional[str] = None) -> List[Dict[str, Any]]:
         """List fields, optionally filtered by source.
