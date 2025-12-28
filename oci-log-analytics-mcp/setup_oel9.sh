@@ -273,21 +273,51 @@ echo "============================================================"
 echo "  STEP 7: Configure MCP Server"
 echo "============================================================"
 
-# Get Log Analytics namespace
-log_info "Fetching your Log Analytics namespace..."
-
 # Get tenancy OCID from OCI config
 TENANCY_OCID=$(grep 'tenancy' ~/.oci/config | head -1 | cut -d'=' -f2 | tr -d ' ')
 
-if [ -n "$TENANCY_OCID" ]; then
-    # Get tenancy name
-    TENANCY_NAME=$(oci iam tenancy get --tenancy-id "$TENANCY_OCID" --query 'data.name' --raw-output 2>/dev/null || echo "")
+# Get Log Analytics namespace using OCI CLI (NOT the tenancy name!)
+log_info "Fetching your Log Analytics namespace..."
+NAMESPACE=""
 
-    if [ -n "$TENANCY_NAME" ]; then
-        # Namespace is typically the tenancy name in lowercase
-        NAMESPACE=$(echo "$TENANCY_NAME" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
-        log_info "Detected namespace: $NAMESPACE"
+if [ -n "$TENANCY_OCID" ]; then
+    # Try to get the actual Log Analytics namespace
+    NAMESPACE=$(oci log-analytics namespace list --compartment-id "$TENANCY_OCID" --query 'data.items[0]."namespace-name"' --raw-output 2>/dev/null || echo "")
+
+    if [ -n "$NAMESPACE" ] && [ "$NAMESPACE" != "null" ]; then
+        log_success "Found Log Analytics namespace: $NAMESPACE"
+    else
+        # If that fails, try to get it directly
+        log_warning "Could not auto-detect namespace. Trying alternative method..."
+
+        # Get tenancy name as fallback hint
+        TENANCY_NAME=$(oci iam tenancy get --tenancy-id "$TENANCY_OCID" --query 'data.name' --raw-output 2>/dev/null || echo "")
+
+        echo ""
+        echo "Could not automatically detect your Log Analytics namespace."
+        echo "To find it, go to: OCI Console -> Observability -> Logging Analytics -> Administration"
+        echo "Look for 'Service Details' -> 'Namespace'"
+        if [ -n "$TENANCY_NAME" ]; then
+            echo "(Note: Tenancy name is '$TENANCY_NAME', but LA namespace may be different)"
+        fi
+        echo ""
+        read -p "Enter your Log Analytics namespace: " NAMESPACE
     fi
+fi
+
+if [ -z "$NAMESPACE" ]; then
+    echo ""
+    echo "Log Analytics namespace is required."
+    echo "To find it: OCI Console -> Observability -> Logging Analytics -> Administration -> Service Details"
+    read -p "Enter your Log Analytics namespace: " NAMESPACE
+fi
+
+# Verify the namespace works
+log_info "Verifying Log Analytics namespace..."
+if oci log-analytics namespace get --namespace-name "$NAMESPACE" &>/dev/null; then
+    log_success "Namespace '$NAMESPACE' verified successfully!"
+else
+    log_warning "Could not verify namespace. Please ensure Log Analytics is enabled and the namespace is correct."
 fi
 
 # Get compartment
