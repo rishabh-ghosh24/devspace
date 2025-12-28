@@ -215,24 +215,27 @@ if [ -d "$INSTALL_DIR" ]; then
 fi
 
 if [ ! -d "$INSTALL_DIR" ]; then
-    log_info "Creating MCP server directory..."
-    mkdir -p "$INSTALL_DIR"
+    log_info "Cloning MCP server from repository..."
 
-    # Check if we're in a git repo with the MCP server
-    if [ -d "./oci-log-analytics-mcp" ]; then
-        log_info "Copying from local directory..."
-        cp -r ./oci-log-analytics-mcp/* "$INSTALL_DIR/"
-    else
-        log_info "Cloning from repository..."
-        # You can change this URL to your actual repository
-        git clone https://github.com/rishabh-ghosh24/devspace.git /tmp/devspace-clone
+    # Clone the repository (specific branch with the MCP server)
+    REPO_URL="https://github.com/rishabh-ghosh24/devspace.git"
+    BRANCH="claude/restore-oci-analytics-ZxSQg"
+
+    rm -rf /tmp/devspace-clone 2>/dev/null || true
+
+    if git clone --branch "$BRANCH" --single-branch "$REPO_URL" /tmp/devspace-clone; then
         if [ -d "/tmp/devspace-clone/oci-log-analytics-mcp" ]; then
-            cp -r /tmp/devspace-clone/oci-log-analytics-mcp/* "$INSTALL_DIR/"
+            cp -r /tmp/devspace-clone/oci-log-analytics-mcp "$INSTALL_DIR"
             rm -rf /tmp/devspace-clone
+            log_success "Repository cloned successfully."
         else
-            log_error "MCP server not found in repository."
+            log_error "MCP server directory not found in repository."
+            rm -rf /tmp/devspace-clone
             exit 1
         fi
+    else
+        log_error "Failed to clone repository. Check your internet connection."
+        exit 1
     fi
 fi
 
