@@ -73,33 +73,22 @@ echo "============================================================"
 echo "  STEP 2: Python Installation"
 echo "============================================================"
 
-# Check Python version
-PYTHON_VERSION=$(python3 --version 2>/dev/null | cut -d' ' -f2 || echo "0.0.0")
-PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d'.' -f1)
-PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d'.' -f2)
+# MCP package requires Python 3.10+, so we need Python 3.11
+log_info "Installing Python 3.11 (required for MCP package)..."
+$SUDO dnf install -y python3.11 python3.11-pip python3.11-devel
 
-log_info "Current Python version: $PYTHON_VERSION"
-
-if [ "$PYTHON_MAJOR" -ge 3 ] && [ "$PYTHON_MINOR" -ge 9 ]; then
-    log_success "Python $PYTHON_VERSION is sufficient (>= 3.9 required)."
+# Verify Python 3.11 is available
+if command -v python3.11 &> /dev/null; then
+    PYTHON_CMD="python3.11"
+    log_success "Python 3.11 installed: $($PYTHON_CMD --version)"
 else
-    log_info "Installing Python 3.11..."
-    $SUDO dnf install -y python3.11 python3.11-pip python3.11-devel
-
-    # Set as default alternatives (optional)
-    $SUDO alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
-
-    log_success "Python 3.11 installed."
+    log_error "Python 3.11 installation failed!"
+    exit 1
 fi
 
-# Ensure pip is up to date
-log_info "Upgrading pip..."
-python3 -m pip install --user --upgrade pip
-
-# Install pipx for isolated tool installations
-log_info "Installing pipx..."
-python3 -m pip install --user pipx
-python3 -m pipx ensurepath
+# Ensure pip is up to date for Python 3.11
+log_info "Upgrading pip for Python 3.11..."
+$PYTHON_CMD -m pip install --user --upgrade pip
 
 # Add to current PATH
 export PATH="$HOME/.local/bin:$PATH"
@@ -251,11 +240,18 @@ echo "============================================================"
 
 cd "$INSTALL_DIR"
 
-log_info "Creating virtual environment..."
-python3 -m venv venv
+# Use Python 3.11 explicitly for the virtual environment
+PYTHON_CMD="python3.11"
+
+log_info "Creating virtual environment with Python 3.11..."
+$PYTHON_CMD -m venv venv
 
 log_info "Activating virtual environment..."
 source venv/bin/activate
+
+# Verify Python version in venv
+VENV_PYTHON_VERSION=$(python --version)
+log_info "Virtual environment Python: $VENV_PYTHON_VERSION"
 
 log_info "Upgrading pip in virtual environment..."
 pip install --upgrade pip
