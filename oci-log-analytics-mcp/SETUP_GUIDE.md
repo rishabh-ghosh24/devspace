@@ -129,13 +129,17 @@ oci iam region list --output table
 ### Step 5: Clone/Download the MCP Server
 
 ```bash
-# Option 1: Clone from repository
-git clone https://github.com/rishabh-ghosh24/devspace.git
-cd devspace/oci-log-analytics-mcp
+# Clone from repository (specific branch)
+git clone -b claude/restore-oci-analytics-ZxSQg https://github.com/rishabh-ghosh24/devspace.git ~/devspace-clone
+mv ~/devspace-clone/oci-log-analytics-mcp ~/oci-log-analytics-mcp
+rm -rf ~/devspace-clone
 
-# Option 2: If you have the files locally, copy them
-# cp -r /path/to/oci-log-analytics-mcp ~/oci-log-analytics-mcp
-# cd ~/oci-log-analytics-mcp
+# Set up git for updates
+cd ~/oci-log-analytics-mcp
+git init
+git remote add origin https://github.com/rishabh-ghosh24/devspace.git
+git fetch origin claude/restore-oci-analytics-ZxSQg
+git checkout -b claude/restore-oci-analytics-ZxSQg --track origin/claude/restore-oci-analytics-ZxSQg
 ```
 
 ---
@@ -282,6 +286,42 @@ oci-la-mcp
 ```
 
 The server will start and wait for MCP protocol messages on stdin.
+
+---
+
+## Updating the MCP Server
+
+To update to the latest version:
+
+```bash
+# Option 1: Use the update script (recommended)
+~/oci-log-analytics-mcp/update.sh
+
+# Option 2: Manual update
+cd ~/oci-log-analytics-mcp
+git pull origin claude/restore-oci-analytics-ZxSQg
+source venv/bin/activate
+pip install -e .
+```
+
+The update script will:
+1. Pull the latest changes from the repository
+2. Reinstall the package
+3. Show you what changed
+
+**Note:** If your installation is not a git repository (missing `.git` folder), you'll need to reinstall:
+
+```bash
+# Backup your config
+cp ~/.oci-la-mcp/config.yaml ~/config.yaml.bak
+
+# Remove and reinstall
+rm -rf ~/oci-log-analytics-mcp
+# Run setup_oel9.sh or follow Step 5+ from this guide
+
+# Restore your config
+cp ~/config.yaml.bak ~/.oci-la-mcp/config.yaml
+```
 
 ---
 

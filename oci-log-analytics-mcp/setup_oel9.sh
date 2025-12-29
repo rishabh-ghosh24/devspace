@@ -203,28 +203,47 @@ if [ -d "$INSTALL_DIR" ]; then
     fi
 fi
 
+REPO_URL="https://github.com/rishabh-ghosh24/devspace.git"
+BRANCH="claude/restore-oci-analytics-ZxSQg"
+
 if [ ! -d "$INSTALL_DIR" ]; then
     log_info "Cloning MCP server from repository..."
 
-    # Clone the repository (specific branch with the MCP server)
-    REPO_URL="https://github.com/rishabh-ghosh24/devspace.git"
-    BRANCH="claude/restore-oci-analytics-ZxSQg"
-
-    rm -rf /tmp/devspace-clone 2>/dev/null || true
-
-    if git clone --branch "$BRANCH" --single-branch "$REPO_URL" /tmp/devspace-clone; then
-        if [ -d "/tmp/devspace-clone/oci-log-analytics-mcp" ]; then
-            cp -r /tmp/devspace-clone/oci-log-analytics-mcp "$INSTALL_DIR"
-            rm -rf /tmp/devspace-clone
-            log_success "Repository cloned successfully."
+    # Clone the full repository to keep git history for updates
+    if git clone --branch "$BRANCH" --single-branch "$REPO_URL" "$INSTALL_DIR-repo"; then
+        if [ -d "$INSTALL_DIR-repo/oci-log-analytics-mcp" ]; then
+            # Move the MCP server directory and keep git info
+            mv "$INSTALL_DIR-repo/oci-log-analytics-mcp" "$INSTALL_DIR"
+            # Copy .git directory for update capability
+            mkdir -p "$INSTALL_DIR/.git"
+            cp -r "$INSTALL_DIR-repo/.git" "$INSTALL_DIR/.git-parent"
+            # Initialize as git repo linked to parent
+            cd "$INSTALL_DIR"
+            git init
+            git remote add origin "$REPO_URL"
+            git fetch origin "$BRANCH"
+            git checkout -b "$BRANCH" --track "origin/$BRANCH" 2>/dev/null || git checkout "$BRANCH"
+            cd - > /dev/null
+            rm -rf "$INSTALL_DIR-repo"
+            log_success "Repository cloned successfully (with git support for updates)."
         else
             log_error "MCP server directory not found in repository."
-            rm -rf /tmp/devspace-clone
+            rm -rf "$INSTALL_DIR-repo"
             exit 1
         fi
     else
         log_error "Failed to clone repository. Check your internet connection."
         exit 1
+    fi
+else
+    # Check if it's already a git repo
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        log_info "Git repository detected. Pulling latest changes..."
+        cd "$INSTALL_DIR"
+        git pull origin "$BRANCH" || log_warning "Could not pull updates. Continuing with existing version."
+        cd - > /dev/null
+    else
+        log_warning "Existing installation is not a git repo. Updates will require reinstall."
     fi
 fi
 
@@ -411,6 +430,59 @@ exec oci-la-mcp "$@"
 EOF
 chmod +x "$INSTALL_DIR/run.sh"
 
+# Create update script
+cat > "$INSTALL_DIR/update.sh" << 'UPDATEEOF'
+#!/bin/bash
+# Update the MCP server to the latest version
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+echo "Updating OCI Log Analytics MCP Server..."
+echo ""
+
+# Check if this is a git repo
+if [ ! -d ".git" ]; then
+    echo "ERROR: This installation is not a git repository."
+    echo "To enable updates, you need to reinstall using the setup script."
+    echo ""
+    echo "Run: rm -rf ~/oci-log-analytics-mcp && bash setup_oel9.sh"
+    exit 1
+fi
+
+# Pull latest changes
+BRANCH="claude/restore-oci-analytics-ZxSQg"
+echo "Fetching updates from origin/$BRANCH..."
+git fetch origin "$BRANCH"
+
+# Check if there are updates
+LOCAL=$(git rev-parse HEAD)
+REMOTE=$(git rev-parse "origin/$BRANCH")
+
+if [ "$LOCAL" = "$REMOTE" ]; then
+    echo "Already up to date!"
+else
+    echo "Updates available. Pulling changes..."
+    git pull origin "$BRANCH"
+
+    echo ""
+    echo "Reinstalling package with new changes..."
+    source "$SCRIPT_DIR/venv/bin/activate"
+    pip install -e .
+
+    echo ""
+    echo "Update complete!"
+    echo ""
+    echo "Changes pulled:"
+    git log --oneline "$LOCAL..$REMOTE"
+fi
+
+echo ""
+echo "Current version: $(git rev-parse --short HEAD)"
+UPDATEEOF
+chmod +x "$INSTALL_DIR/update.sh"
+
 # Create test script
 cat > "$INSTALL_DIR/test_connection.sh" << 'EOF'
 #!/bin/bash
@@ -519,10 +591,13 @@ echo ""
 echo "  2. Run the MCP server:"
 echo "     $INSTALL_DIR/run.sh"
 echo ""
-echo "  3. Activate the environment manually:"
+echo "  3. Update to latest version:"
+echo "     $INSTALL_DIR/update.sh"
+echo ""
+echo "  4. Activate the environment manually:"
 echo "     source $INSTALL_DIR/activate.sh"
 echo ""
-echo "  4. Run tests:"
+echo "  5. Run tests:"
 echo "     cd $INSTALL_DIR && source venv/bin/activate && pytest"
 echo ""
 echo "MCP Client Configuration:"
