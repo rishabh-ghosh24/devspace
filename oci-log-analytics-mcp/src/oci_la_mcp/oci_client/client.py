@@ -141,7 +141,17 @@ class OCILogAnalyticsClient:
         if hasattr(data, "items") and data.items:
             for item in data.items:
                 if hasattr(item, "values"):
-                    rows.append(item.values)
+                    # item.values could be a list/tuple or a dict's values method
+                    values = item.values
+                    if callable(values):
+                        # It's a method (like dict.values), call it and convert to list
+                        rows.append(list(values()))
+                    elif isinstance(values, (list, tuple)):
+                        # It's already a list/tuple
+                        rows.append(list(values))
+                    else:
+                        # Convert whatever it is to a list
+                        rows.append([values])
                 elif isinstance(item, dict):
                     rows.append(list(item.values()))
 
