@@ -231,15 +231,24 @@ class MCPHandlers:
 
     async def _visualize(self, args: Dict) -> List[Dict]:
         """Generate visualization."""
-        # Execute query first
+        # Execute query first - support all time parameters
         query_result = await self.query_engine.execute(
-            query=args["query"], time_range=args.get("time_range", "last_1_hour")
+            query=args["query"],
+            time_range=args.get("time_range", "last_1_hour"),
+            time_start=args.get("time_start"),
+            time_end=args.get("time_end"),
         )
+
+        # Log for debugging
+        data = query_result.get("data", {})
+        row_count = len(data.get("rows", []))
+        col_count = len(data.get("columns", []))
+        logger.info(f"Visualize: Query returned {row_count} rows, {col_count} columns")
 
         # Generate visualization
         chart_type = ChartType(args["chart_type"])
         viz_result = self.visualization.generate(
-            data=query_result["data"],
+            data=data,
             chart_type=chart_type,
             title=args.get("title"),
         )
@@ -253,14 +262,17 @@ class MCPHandlers:
             {
                 "type": "text",
                 "text": f"Raw data ({len(viz_result['raw_data'])} records): "
-                + json.dumps(viz_result["raw_data"][:10], indent=2),
+                + json.dumps(viz_result["raw_data"][:10], indent=2, default=str),
             },
         ]
 
     async def _export_results(self, args: Dict) -> List[Dict]:
         """Export query results."""
         result = await self.query_engine.execute(
-            query=args["query"], time_range=args.get("time_range", "last_1_hour")
+            query=args["query"],
+            time_range=args.get("time_range", "last_1_hour"),
+            time_start=args.get("time_start"),
+            time_end=args.get("time_end"),
         )
 
         exported = self.export_service.export(

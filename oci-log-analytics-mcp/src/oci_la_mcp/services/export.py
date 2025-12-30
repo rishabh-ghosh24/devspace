@@ -55,16 +55,38 @@ class ExportService:
         rows = data.get("rows", [])
 
         if not columns and rows:
-            columns = [f"col_{i}" for i in range(len(rows[0]))]
+            first_row = self._materialize_row(rows[0]) if rows else []
+            columns = [f"col_{i}" for i in range(len(first_row))]
 
         # Write header
         writer.writerow(columns)
 
-        # Write rows
+        # Write rows - ensure each row is properly materialized
         for row in rows:
-            writer.writerow(row)
+            materialized = self._materialize_row(row)
+            writer.writerow(materialized)
 
         return output.getvalue()
+
+    def _materialize_row(self, row):
+        """Ensure a row is a proper list of values.
+
+        Args:
+            row: Row data (may be list, tuple, dict, dict_values, or callable).
+
+        Returns:
+            List of values.
+        """
+        if row is None:
+            return []
+        elif callable(row):
+            return list(row())
+        elif hasattr(row, '__iter__') and not isinstance(row, (str, dict)):
+            return list(row)
+        elif isinstance(row, dict):
+            return list(row.values())
+        else:
+            return [row]
 
     def _export_json(self, data: Dict[str, Any], include_metadata: bool) -> str:
         """Export to JSON format.
@@ -80,12 +102,14 @@ class ExportService:
         rows = data.get("rows", [])
 
         if not columns and rows:
-            columns = [f"col_{i}" for i in range(len(rows[0]))]
+            first_row = self._materialize_row(rows[0]) if rows else []
+            columns = [f"col_{i}" for i in range(len(first_row))]
 
         # Convert to list of dictionaries
         records = []
         for row in rows:
-            record = dict(zip(columns, row))
+            materialized = self._materialize_row(row)
+            record = dict(zip(columns, materialized))
             records.append(record)
 
         if include_metadata:

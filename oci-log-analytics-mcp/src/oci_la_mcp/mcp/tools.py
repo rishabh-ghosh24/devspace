@@ -198,7 +198,15 @@ def get_tools() -> List[Dict[str, Any]]:
                     "time_range": {
                         "type": "string",
                         "description": "Relative time range",
-                        "enum": ["last_15_min", "last_1_hour", "last_24_hours", "last_7_days"],
+                        "enum": ["last_15_min", "last_1_hour", "last_24_hours", "last_7_days", "last_30_days"],
+                    },
+                    "time_start": {
+                        "type": "string",
+                        "description": "Absolute start time (ISO 8601). Overrides time_range.",
+                    },
+                    "time_end": {
+                        "type": "string",
+                        "description": "Absolute end time (ISO 8601). Overrides time_range.",
                     },
                 },
                 "required": ["query", "chart_type"],
@@ -223,6 +231,15 @@ def get_tools() -> List[Dict[str, Any]]:
                     "time_range": {
                         "type": "string",
                         "description": "Relative time range",
+                        "enum": ["last_15_min", "last_1_hour", "last_24_hours", "last_7_days", "last_30_days"],
+                    },
+                    "time_start": {
+                        "type": "string",
+                        "description": "Absolute start time (ISO 8601). Overrides time_range.",
+                    },
+                    "time_end": {
+                        "type": "string",
+                        "description": "Absolute end time (ISO 8601). Overrides time_range.",
                     },
                 },
                 "required": ["query", "format"],

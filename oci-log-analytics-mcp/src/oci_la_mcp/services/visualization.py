@@ -104,12 +104,51 @@ class VisualizationEngine:
         ]
         rows = data.get("rows", [])
 
-        if not columns and rows:
-            # If no column info, create default column names
-            if rows:
-                columns = [f"col_{i}" for i in range(len(rows[0]))]
+        # Ensure rows are properly materialized (not dict_values or other iterators)
+        materialized_rows = []
+        for row in rows:
+            if row is None:
+                continue
+            elif callable(row):
+                # It's a method reference, call it
+                materialized_rows.append(list(row()))
+            elif hasattr(row, '__iter__') and not isinstance(row, (str, dict)):
+                # It's iterable (list, tuple, dict_values, etc.)
+                materialized_rows.append(list(row))
+            elif isinstance(row, dict):
+                # It's a dictionary, extract values
+                materialized_rows.append(list(row.values()))
+            else:
+                # Single value, wrap in list
+                materialized_rows.append([row])
 
-        return pd.DataFrame(rows, columns=columns) if rows else pd.DataFrame()
+        if not materialized_rows:
+            return pd.DataFrame()
+
+        # Ensure column count matches row data
+        if not columns:
+            # Create default column names based on first row
+            first_row = materialized_rows[0] if materialized_rows else []
+            columns = [f"col_{i}" for i in range(len(first_row))]
+
+        # Ensure all rows have the same length as columns
+        num_cols = len(columns)
+        normalized_rows = []
+        for row in materialized_rows:
+            if len(row) < num_cols:
+                # Pad with None if too short
+                row = list(row) + [None] * (num_cols - len(row))
+            elif len(row) > num_cols:
+                # Truncate if too long
+                row = list(row)[:num_cols]
+            normalized_rows.append(row)
+
+        try:
+            return pd.DataFrame(normalized_rows, columns=columns)
+        except Exception as e:
+            # Last resort: return empty DataFrame on error
+            print(f"Error creating DataFrame: {e}")
+            return pd.DataFrame()
 
     def _generate_empty_chart(self, title: Optional[str]) -> Dict[str, Any]:
         """Generate an empty chart placeholder.
@@ -306,12 +345,30 @@ class VisualizationEngine:
         fig, ax = plt.subplots(figsize=(4, 3))
         ax.axis("off")
 
-        value = df.iloc[0, 0] if len(df) > 0 else "N/A"
+        # Get the value - prefer the last column (usually the count/aggregate)
+        value = "N/A"
+        if len(df) > 0:
+            if len(df.columns) > 1:
+                # If multiple columns, take the last one (the aggregate value)
+                value = df.iloc[0, -1]
+            else:
+                value = df.iloc[0, 0]
+
+        # Format large numbers
+        if isinstance(value, (int, float)):
+            if value >= 1_000_000:
+                display_value = f"{value/1_000_000:.1f}M"
+            elif value >= 1_000:
+                display_value = f"{value/1_000:.1f}K"
+            else:
+                display_value = f"{value:,.0f}" if isinstance(value, float) else f"{value:,}"
+        else:
+            display_value = str(value)
 
         ax.text(
             0.5,
             0.5,
-            str(value),
+            display_value,
             ha="center",
             va="center",
             fontsize=48,
