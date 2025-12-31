@@ -134,17 +134,24 @@ class OCILogAnalyticsClient:
         Raises:
             oci.exceptions.ServiceError: If OCI API call fails.
         """
+        # Debug logging
+        logger.info(f"Query called: compartment={self._compartment_id[:50]}...")
+        logger.info(f"Query params: include_subcompartments={include_subcompartments}")
+        is_tenancy = self._is_tenancy_ocid(self._compartment_id)
+        logger.info(f"Is tenancy OCID: {is_tenancy}")
+
         # Check if we need to handle tenancy-level cross-compartment query
         # OCI API ignores compartment_id_in_subtree when compartment_id is tenancy OCID
-        if include_subcompartments and self._is_tenancy_ocid(self._compartment_id):
+        if include_subcompartments and is_tenancy:
             logger.info(
                 "Detected tenancy OCID with include_subcompartments=True. "
-                "Querying all first-level compartments..."
+                "Querying ALL compartments in tenancy tree..."
             )
             return await self._query_all_compartments(
                 query_string, time_start, time_end, max_results
             )
 
+        logger.info("Using single compartment query (not tenancy or subcompartments=False)")
         return await self._execute_single_query(
             query_string, time_start, time_end, max_results,
             self._compartment_id, include_subcompartments
