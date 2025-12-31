@@ -135,7 +135,12 @@ def get_tools() -> List[Dict[str, Any]]:
                     },
                     "compartment_id": {
                         "type": "string",
-                        "description": "Optional compartment OCID to query. Use tenancy OCID (ocid1.tenancy...) to query entire tenancy. If not specified, uses default compartment from config.",
+                        "description": "Optional compartment OCID to query. If not specified, uses default compartment from config.",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["default", "tenancy"],
+                        "description": "Query scope: 'default' uses your configured compartment, 'tenancy' queries ALL compartments across the entire tenancy. Use 'tenancy' when user asks for logs 'across all compartments', 'entire tenancy', 'organization-wide', etc. When scope='tenancy', include_subcompartments is automatically set to true.",
                     },
                 },
                 "required": ["query"],
@@ -234,6 +239,11 @@ def get_tools() -> List[Dict[str, Any]]:
                         "type": "string",
                         "description": "Optional compartment OCID to query. If not specified, uses default compartment from config.",
                     },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["default", "tenancy"],
+                        "description": "Query scope: 'default' uses your configured compartment, 'tenancy' queries ALL compartments across the entire tenancy.",
+                    },
                 },
                 "required": ["query", "chart_type"],
             },
@@ -274,6 +284,11 @@ def get_tools() -> List[Dict[str, Any]]:
                     "compartment_id": {
                         "type": "string",
                         "description": "Optional compartment OCID to query. If not specified, uses default compartment from config.",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["default", "tenancy"],
+                        "description": "Query scope: 'default' uses your configured compartment, 'tenancy' queries ALL compartments across the entire tenancy.",
                     },
                 },
                 "required": ["query", "format"],

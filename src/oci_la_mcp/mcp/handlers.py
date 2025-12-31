@@ -189,15 +189,37 @@ class MCPHandlers:
         }
         return [{"type": "text", "text": json.dumps(result_dict, indent=2)}]
 
-    async def _run_query(self, args: Dict) -> List[Dict]:
-        """Execute a query."""
-        # Get include_subcompartments - handle both boolean and string values
+    def _resolve_scope(self, args: Dict) -> tuple:
+        """Resolve scope parameter to compartment_id and include_subcompartments.
+
+        Args:
+            args: Tool arguments containing scope, compartment_id, include_subcompartments.
+
+        Returns:
+            Tuple of (compartment_id, include_subcompartments).
+        """
+        scope = args.get("scope", "default")
+        compartment_id = args.get("compartment_id")
         include_subs = args.get("include_subcompartments", False)
+
         if isinstance(include_subs, str):
             include_subs = include_subs.lower() in ("true", "yes", "1")
 
-        # Get optional compartment_id override
-        compartment_id = args.get("compartment_id")
+        # If scope is "tenancy", use tenancy OCID and enable subcompartments
+        if scope == "tenancy":
+            # Get tenancy OCID from OCI config
+            tenancy_id = self.oci_client._config.get("tenancy")
+            if tenancy_id:
+                compartment_id = tenancy_id
+                include_subs = True  # Always include subcompartments for tenancy scope
+                logger.info(f"Scope=tenancy: using tenancy OCID {tenancy_id[:50]}...")
+
+        return compartment_id, include_subs
+
+    async def _run_query(self, args: Dict) -> List[Dict]:
+        """Execute a query."""
+        # Resolve scope to compartment_id and include_subcompartments
+        compartment_id, include_subs = self._resolve_scope(args)
 
         logger.info(f"run_query: include_subcompartments={include_subs}, compartment_id={compartment_id}, args={args}")
 
@@ -247,14 +269,17 @@ class MCPHandlers:
 
     async def _visualize(self, args: Dict) -> List[Dict]:
         """Generate visualization."""
+        # Resolve scope to compartment_id and include_subcompartments
+        compartment_id, include_subs = self._resolve_scope(args)
+
         # Execute query first - support all time parameters
         query_result = await self.query_engine.execute(
             query=args["query"],
             time_range=args.get("time_range", "last_1_hour"),
             time_start=args.get("time_start"),
             time_end=args.get("time_end"),
-            include_subcompartments=args.get("include_subcompartments", False),
-            compartment_id=args.get("compartment_id"),
+            include_subcompartments=include_subs,
+            compartment_id=compartment_id,
         )
 
         # Log for debugging
@@ -286,13 +311,16 @@ class MCPHandlers:
 
     async def _export_results(self, args: Dict) -> List[Dict]:
         """Export query results."""
+        # Resolve scope to compartment_id and include_subcompartments
+        compartment_id, include_subs = self._resolve_scope(args)
+
         result = await self.query_engine.execute(
             query=args["query"],
             time_range=args.get("time_range", "last_1_hour"),
             time_start=args.get("time_start"),
             time_end=args.get("time_end"),
-            include_subcompartments=args.get("include_subcompartments", False),
-            compartment_id=args.get("compartment_id"),
+            include_subcompartments=include_subs,
+            compartment_id=compartment_id,
         )
 
         exported = self.export_service.export(
