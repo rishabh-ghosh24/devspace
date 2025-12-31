@@ -74,19 +74,22 @@ class OCILogAnalyticsClient:
         """
         return ocid.startswith("ocid1.tenancy.")
 
-    async def _get_first_level_compartments(self) -> List[str]:
-        """Get all first-level compartment OCIDs under the tenancy.
+    async def _get_all_compartments(self) -> List[str]:
+        """Get ALL compartment OCIDs in the entire tenancy tree.
 
         Returns:
-            List of compartment OCIDs.
+            List of all compartment OCIDs (including nested ones).
         """
         tenancy_id = self._config.get("tenancy")
         compartments = []
 
         try:
+            # Use compartment_id_in_subtree=True to get ALL compartments
             response = self._identity_client.list_compartments(
                 compartment_id=tenancy_id,
+                compartment_id_in_subtree=True,  # Get entire tree, not just first level
                 lifecycle_state="ACTIVE",
+                access_level="ACCESSIBLE",
             )
             compartments = [c.id for c in response.data]
 
@@ -95,12 +98,14 @@ class OCILogAnalyticsClient:
                 await self._rate_limiter.acquire()
                 response = self._identity_client.list_compartments(
                     compartment_id=tenancy_id,
+                    compartment_id_in_subtree=True,
                     lifecycle_state="ACTIVE",
+                    access_level="ACCESSIBLE",
                     page=response.next_page,
                 )
                 compartments.extend([c.id for c in response.data])
 
-            logger.info(f"Found {len(compartments)} first-level compartments")
+            logger.info(f"Found {len(compartments)} total compartments in tenancy tree")
         except Exception as e:
             logger.warning(f"Failed to list compartments: {e}")
 
@@ -220,7 +225,7 @@ class OCILogAnalyticsClient:
         time_end: str,
         max_results: Optional[int],
     ) -> Dict[str, Any]:
-        """Query all first-level compartments and aggregate results.
+        """Query ALL compartments in the tenancy tree and aggregate results.
 
         This is a workaround for OCI API behavior where compartment_id_in_subtree
         is ignored when compartment_id is a tenancy OCID.
@@ -234,7 +239,8 @@ class OCILogAnalyticsClient:
         Returns:
             Aggregated query results from all compartments.
         """
-        compartments = await self._get_first_level_compartments()
+        # Get ALL compartments in the entire tenancy tree
+        compartments = await self._get_all_compartments()
 
         if not compartments:
             logger.warning("No compartments found, falling back to tenancy query")
@@ -243,20 +249,25 @@ class OCILogAnalyticsClient:
                 self._compartment_id, True
             )
 
-        # Also include the tenancy root itself (some logs may be at root level)
-        compartments_to_query = [self._compartment_id] + compartments
+        logger.info(f"Will query {len(compartments)} compartments across tenancy tree")
 
         all_columns = []
         all_rows = []
         total_count = 0
         is_partial = False
+        successful_queries = 0
+        failed_queries = 0
 
-        for i, comp_id in enumerate(compartments_to_query):
+        for i, comp_id in enumerate(compartments):
             try:
-                logger.info(f"Querying compartment {i+1}/{len(compartments_to_query)}: {comp_id[:30]}...")
+                if (i + 1) % 10 == 0 or i == 0:
+                    logger.info(f"Querying compartment {i+1}/{len(compartments)}...")
+
+                # Query each compartment directly (no need for include_subcompartments
+                # since we're already iterating through all compartments)
                 result = await self._execute_single_query(
                     query_string, time_start, time_end, max_results,
-                    comp_id, True  # Always include subcompartments
+                    comp_id, False  # Don't use subtree since we query each compartment
                 )
 
                 # Use columns from first successful response
@@ -265,19 +276,28 @@ class OCILogAnalyticsClient:
 
                 all_rows.extend(result.get("rows", []))
                 total_count += result.get("total_count", 0)
+                successful_queries += 1
 
                 if result.get("is_partial", False):
                     is_partial = True
 
             except Exception as e:
-                logger.warning(f"Failed to query compartment {comp_id}: {e}")
+                failed_queries += 1
+                # Only log first few failures to avoid spam
+                if failed_queries <= 5:
+                    logger.warning(f"Failed to query compartment {comp_id[:50]}: {e}")
+                elif failed_queries == 6:
+                    logger.warning("Suppressing further compartment query failure logs...")
                 continue
 
         logger.info(
             f"Cross-compartment query complete: "
-            f"{len(compartments_to_query)} compartments, "
-            f"{len(all_rows)} total rows"
+            f"{successful_queries}/{len(compartments)} compartments succeeded, "
+            f"{len(all_rows)} total rows, {total_count} total count"
         )
+
+        if failed_queries > 0:
+            logger.warning(f"{failed_queries} compartments failed to query (may lack log data or access)")
 
         return {
             "columns": all_columns,
@@ -285,7 +305,8 @@ class OCILogAnalyticsClient:
             "total_count": total_count,
             "is_partial": is_partial,
             "_cross_compartment_query": True,
-            "_compartments_queried": len(compartments_to_query),
+            "_compartments_queried": successful_queries,
+            "_compartments_failed": failed_queries,
         }
 
     def _parse_query_response(self, data: Any) -> Dict[str, Any]:
