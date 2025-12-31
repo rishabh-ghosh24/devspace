@@ -3,6 +3,7 @@
 import logging
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
+from pathlib import Path
 
 import oci
 
@@ -11,6 +12,18 @@ from .rate_limiter import RateLimiter
 from ..config.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+# Debug file logging (writes to ~/.oci-la-mcp/debug.log)
+DEBUG_LOG_PATH = Path.home() / ".oci-la-mcp" / "debug.log"
+
+
+def _debug(msg: str):
+    """Write debug message to file for troubleshooting."""
+    try:
+        with open(DEBUG_LOG_PATH, "a") as f:
+            f.write(f"{datetime.now().isoformat()} | {msg}\n")
+    except Exception:
+        pass
 
 
 class OCILogAnalyticsClient:
@@ -81,6 +94,7 @@ class OCILogAnalyticsClient:
             List of all compartment OCIDs (including nested ones).
         """
         tenancy_id = self._config.get("tenancy")
+        _debug(f"_get_all_compartments: tenancy_id={tenancy_id}")
         compartments = []
 
         try:
@@ -92,9 +106,12 @@ class OCILogAnalyticsClient:
                 access_level="ACCESSIBLE",
             )
             compartments = [c.id for c in response.data]
+            _debug(f"_get_all_compartments: first page returned {len(response.data)} compartments")
 
             # Handle pagination
+            page_num = 1
             while response.has_next_page:
+                page_num += 1
                 await self._rate_limiter.acquire()
                 response = self._identity_client.list_compartments(
                     compartment_id=tenancy_id,
@@ -104,10 +121,11 @@ class OCILogAnalyticsClient:
                     page=response.next_page,
                 )
                 compartments.extend([c.id for c in response.data])
+                _debug(f"_get_all_compartments: page {page_num} returned {len(response.data)} more")
 
-            logger.info(f"Found {len(compartments)} total compartments in tenancy tree")
+            _debug(f"_get_all_compartments: TOTAL {len(compartments)} compartments found")
         except Exception as e:
-            logger.warning(f"Failed to list compartments: {e}")
+            _debug(f"_get_all_compartments: ERROR - {e}")
 
         return compartments
 
@@ -134,24 +152,22 @@ class OCILogAnalyticsClient:
         Raises:
             oci.exceptions.ServiceError: If OCI API call fails.
         """
-        # Debug logging
-        logger.info(f"Query called: compartment={self._compartment_id[:50]}...")
-        logger.info(f"Query params: include_subcompartments={include_subcompartments}")
+        # File-based debug logging (check ~/.oci-la-mcp/debug.log)
+        _debug(f"=== QUERY START ===")
+        _debug(f"compartment_id: {self._compartment_id}")
+        _debug(f"include_subcompartments: {include_subcompartments}")
         is_tenancy = self._is_tenancy_ocid(self._compartment_id)
-        logger.info(f"Is tenancy OCID: {is_tenancy}")
+        _debug(f"is_tenancy_ocid: {is_tenancy}")
 
         # Check if we need to handle tenancy-level cross-compartment query
         # OCI API ignores compartment_id_in_subtree when compartment_id is tenancy OCID
         if include_subcompartments and is_tenancy:
-            logger.info(
-                "Detected tenancy OCID with include_subcompartments=True. "
-                "Querying ALL compartments in tenancy tree..."
-            )
+            _debug("TAKING PATH: _query_all_compartments (tenancy + subcompartments)")
             return await self._query_all_compartments(
                 query_string, time_start, time_end, max_results
             )
 
-        logger.info("Using single compartment query (not tenancy or subcompartments=False)")
+        _debug("TAKING PATH: _execute_single_query (single compartment)")
         return await self._execute_single_query(
             query_string, time_start, time_end, max_results,
             self._compartment_id, include_subcompartments
@@ -246,17 +262,21 @@ class OCILogAnalyticsClient:
         Returns:
             Aggregated query results from all compartments.
         """
+        _debug("_query_all_compartments: STARTING")
+
         # Get ALL compartments in the entire tenancy tree
         compartments = await self._get_all_compartments()
 
+        _debug(f"_query_all_compartments: got {len(compartments)} compartments")
+
         if not compartments:
-            logger.warning("No compartments found, falling back to tenancy query")
+            _debug("_query_all_compartments: NO COMPARTMENTS - falling back to tenancy query")
             return await self._execute_single_query(
                 query_string, time_start, time_end, max_results,
                 self._compartment_id, True
             )
 
-        logger.info(f"Will query {len(compartments)} compartments across tenancy tree")
+        _debug(f"_query_all_compartments: will iterate through {len(compartments)} compartments")
 
         all_columns = []
         all_rows = []
