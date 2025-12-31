@@ -209,28 +209,9 @@ BRANCH="claude/restore-oci-analytics-ZxSQg"
 if [ ! -d "$INSTALL_DIR" ]; then
     log_info "Cloning MCP server from repository..."
 
-    # Clone the full repository to keep git history for updates
-    if git clone --branch "$BRANCH" --single-branch "$REPO_URL" "$INSTALL_DIR-repo"; then
-        if [ -d "$INSTALL_DIR-repo/oci-log-analytics-mcp" ]; then
-            # Move the MCP server directory and keep git info
-            mv "$INSTALL_DIR-repo/oci-log-analytics-mcp" "$INSTALL_DIR"
-            # Copy .git directory for update capability
-            mkdir -p "$INSTALL_DIR/.git"
-            cp -r "$INSTALL_DIR-repo/.git" "$INSTALL_DIR/.git-parent"
-            # Initialize as git repo linked to parent
-            cd "$INSTALL_DIR"
-            git init
-            git remote add origin "$REPO_URL"
-            git fetch origin "$BRANCH"
-            git checkout -b "$BRANCH" --track "origin/$BRANCH" 2>/dev/null || git checkout "$BRANCH"
-            cd - > /dev/null
-            rm -rf "$INSTALL_DIR-repo"
-            log_success "Repository cloned successfully (with git support for updates)."
-        else
-            log_error "MCP server directory not found in repository."
-            rm -rf "$INSTALL_DIR-repo"
-            exit 1
-        fi
+    # Clone directly - repo now has flat structure
+    if git clone --branch "$BRANCH" --single-branch "$REPO_URL" "$INSTALL_DIR"; then
+        log_success "Repository cloned successfully."
     else
         log_error "Failed to clone repository. Check your internet connection."
         exit 1
@@ -401,87 +382,16 @@ EOF
 log_success "Configuration saved to ~/.oci-la-mcp/config.yaml"
 
 # ============================================================
-# STEP 8: Create Helper Scripts
+# STEP 8: Make Scripts Executable
 # ============================================================
 echo ""
 echo "============================================================"
-echo "  STEP 8: Create Helper Scripts"
+echo "  STEP 8: Configure Scripts"
 echo "============================================================"
 
-# Create activation script
-cat > "$INSTALL_DIR/activate.sh" << 'EOF'
-#!/bin/bash
-# Activate the MCP server virtual environment
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/venv/bin/activate"
-export PATH="$SCRIPT_DIR/venv/bin:$PATH"
-echo "MCP Server environment activated."
-echo "Run 'oci-la-mcp' to start the server."
-EOF
-chmod +x "$INSTALL_DIR/activate.sh"
-
-# Create run script
-cat > "$INSTALL_DIR/run.sh" << 'EOF'
-#!/bin/bash
-# Run the MCP server
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/venv/bin/activate"
-exec oci-la-mcp "$@"
-EOF
-chmod +x "$INSTALL_DIR/run.sh"
-
-# Create update script
-cat > "$INSTALL_DIR/update.sh" << 'UPDATEEOF'
-#!/bin/bash
-# Update the MCP server to the latest version
-set -e
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-
-echo "Updating OCI Log Analytics MCP Server..."
-echo ""
-
-# Check if this is a git repo
-if [ ! -d ".git" ]; then
-    echo "ERROR: This installation is not a git repository."
-    echo "To enable updates, you need to reinstall using the setup script."
-    echo ""
-    echo "Run: rm -rf ~/oci-log-analytics-mcp && bash setup_oel9.sh"
-    exit 1
-fi
-
-# Pull latest changes
-BRANCH="claude/restore-oci-analytics-ZxSQg"
-echo "Fetching updates from origin/$BRANCH..."
-git fetch origin "$BRANCH"
-
-# Check if there are updates
-LOCAL=$(git rev-parse HEAD)
-REMOTE=$(git rev-parse "origin/$BRANCH")
-
-if [ "$LOCAL" = "$REMOTE" ]; then
-    echo "Already up to date!"
-else
-    echo "Updates available. Pulling changes..."
-    git pull origin "$BRANCH"
-
-    echo ""
-    echo "Reinstalling package with new changes..."
-    source "$SCRIPT_DIR/venv/bin/activate"
-    pip install -e .
-
-    echo ""
-    echo "Update complete!"
-    echo ""
-    echo "Changes pulled:"
-    git log --oneline "$LOCAL..$REMOTE"
-fi
-
-echo ""
-echo "Current version: $(git rev-parse --short HEAD)"
-UPDATEEOF
-chmod +x "$INSTALL_DIR/update.sh"
+# Make start.sh executable (it's already in the repo)
+chmod +x "$INSTALL_DIR/start.sh"
+log_success "start.sh configured"
 
 # Create test script
 cat > "$INSTALL_DIR/test_connection.sh" << 'EOF'
@@ -544,7 +454,7 @@ PYTHON
 EOF
 chmod +x "$INSTALL_DIR/test_connection.sh"
 
-log_success "Helper scripts created."
+log_success "Scripts configured."
 
 # ============================================================
 # STEP 9: Test Installation
@@ -567,7 +477,7 @@ print(f'✓ oci_la_mcp version: {oci_la_mcp.__version__}')
 if command -v oci-la-mcp &> /dev/null; then
     log_success "oci-la-mcp command is available"
 else
-    log_warning "oci-la-mcp not in PATH. Use $INSTALL_DIR/run.sh to run the server."
+    log_warning "oci-la-mcp not in PATH. Use $INSTALL_DIR/start.sh to run the server."
 fi
 
 # ============================================================
@@ -588,14 +498,14 @@ echo ""
 echo "  1. Test the connection:"
 echo "     $INSTALL_DIR/test_connection.sh"
 echo ""
-echo "  2. Run the MCP server:"
-echo "     $INSTALL_DIR/run.sh"
+echo "  2. Start the MCP server (auto-updates first):"
+echo "     $INSTALL_DIR/start.sh"
 echo ""
-echo "  3. Update to latest version:"
-echo "     $INSTALL_DIR/update.sh"
+echo "  3. Start without checking for updates:"
+echo "     $INSTALL_DIR/start.sh --no-update"
 echo ""
-echo "  4. Activate the environment manually:"
-echo "     source $INSTALL_DIR/activate.sh"
+echo "  4. Update only (don't start server):"
+echo "     $INSTALL_DIR/start.sh --update"
 echo ""
 echo "  5. Run tests:"
 echo "     cd $INSTALL_DIR && source venv/bin/activate && pytest"
@@ -606,7 +516,8 @@ echo "For Claude Desktop (add to claude_desktop_config.json):"
 echo '  {'
 echo '    "mcpServers": {'
 echo '      "oci-log-analytics": {'
-echo "        \"command\": \"$INSTALL_DIR/run.sh\""
+echo "        \"command\": \"$INSTALL_DIR/start.sh\","
+echo '        "args": ["--no-update"]'
 echo '      }'
 echo '    }'
 echo '  }'
@@ -620,7 +531,7 @@ if [[ "$ADD_PATH" =~ ^[Yy]$ ]]; then
     echo "" >> ~/.bashrc
     echo "# OCI Log Analytics MCP Server" >> ~/.bashrc
     echo "export PATH=\"$INSTALL_DIR/venv/bin:\$PATH\"" >> ~/.bashrc
-    echo "alias oci-la-mcp-activate='source $INSTALL_DIR/activate.sh'" >> ~/.bashrc
+    echo "alias oci-la-mcp='$INSTALL_DIR/start.sh'" >> ~/.bashrc
     log_success "Added to ~/.bashrc. Run 'source ~/.bashrc' or restart your shell."
 fi
 
