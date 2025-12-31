@@ -191,13 +191,20 @@ class MCPHandlers:
 
     async def _run_query(self, args: Dict) -> List[Dict]:
         """Execute a query."""
+        # Get include_subcompartments - handle both boolean and string values
+        include_subs = args.get("include_subcompartments", False)
+        if isinstance(include_subs, str):
+            include_subs = include_subs.lower() in ("true", "yes", "1")
+
+        logger.info(f"run_query: include_subcompartments={include_subs}, args={args}")
+
         result = await self.query_engine.execute(
             query=args["query"],
             time_range=args.get("time_range"),
             time_start=args.get("time_start"),
             time_end=args.get("time_end"),
             max_results=args.get("max_results"),
-            include_subcompartments=args.get("include_subcompartments", False),
+            include_subcompartments=include_subs,
         )
         return [{"type": "text", "text": json.dumps(result, indent=2, default=str)}]
 

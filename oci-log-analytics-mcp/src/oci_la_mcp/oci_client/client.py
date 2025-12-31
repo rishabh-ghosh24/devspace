@@ -1,5 +1,6 @@
 """OCI Log Analytics client wrapper."""
 
+import logging
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
 
@@ -8,6 +9,8 @@ import oci
 from .auth import get_signer
 from .rate_limiter import RateLimiter
 from ..config.settings import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class OCILogAnalyticsClient:
@@ -105,6 +108,12 @@ class OCILogAnalyticsClient:
             sub_system=oci.log_analytics.models.QueryDetails.SUB_SYSTEM_LOG,
             time_filter=time_range,
             max_total_count=max_results,
+        )
+
+        logger.info(
+            f"OCI Query: compartment={self._compartment_id}, "
+            f"include_subtree={include_subcompartments}, "
+            f"namespace={self._namespace}"
         )
 
         try:
