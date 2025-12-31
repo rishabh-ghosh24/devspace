@@ -114,8 +114,8 @@ def get_tools() -> List[Dict[str, Any]]:
                     },
                     "time_range": {
                         "type": "string",
-                        "description": "Relative time range: last_15_min, last_1_hour, last_24_hours, last_7_days",
-                        "enum": ["last_15_min", "last_1_hour", "last_24_hours", "last_7_days"],
+                        "description": "Relative time range: last_15_min, last_1_hour, last_24_hours, last_7_days, last_30_days",
+                        "enum": ["last_15_min", "last_1_hour", "last_24_hours", "last_7_days", "last_30_days"],
                     },
                     "time_start": {
                         "type": "string",
@@ -128,6 +128,10 @@ def get_tools() -> List[Dict[str, Any]]:
                     "max_results": {
                         "type": "integer",
                         "description": "Maximum number of results to return",
+                    },
+                    "include_subcompartments": {
+                        "type": "boolean",
+                        "description": "If true, include logs from all sub-compartments of the current compartment. Default: false",
                     },
                 },
                 "required": ["query"],
@@ -163,11 +167,16 @@ def get_tools() -> List[Dict[str, Any]]:
                             "properties": {
                                 "query": {"type": "string"},
                                 "time_range": {"type": "string"},
+                                "include_subcompartments": {"type": "boolean"},
                             },
                             "required": ["query"],
                         },
                         "description": "Array of query objects",
-                    }
+                    },
+                    "include_subcompartments": {
+                        "type": "boolean",
+                        "description": "Default for all queries: if true, include logs from sub-compartments. Can be overridden per-query.",
+                    },
                 },
                 "required": ["queries"],
             },
@@ -208,6 +217,10 @@ def get_tools() -> List[Dict[str, Any]]:
                         "type": "string",
                         "description": "Absolute end time (ISO 8601). Overrides time_range.",
                     },
+                    "include_subcompartments": {
+                        "type": "boolean",
+                        "description": "If true, include logs from all sub-compartments. Default: false",
+                    },
                 },
                 "required": ["query", "chart_type"],
             },
@@ -240,6 +253,10 @@ def get_tools() -> List[Dict[str, Any]]:
                     "time_end": {
                         "type": "string",
                         "description": "Absolute end time (ISO 8601). Overrides time_range.",
+                    },
+                    "include_subcompartments": {
+                        "type": "boolean",
+                        "description": "If true, include logs from all sub-compartments. Default: false",
                     },
                 },
                 "required": ["query", "format"],

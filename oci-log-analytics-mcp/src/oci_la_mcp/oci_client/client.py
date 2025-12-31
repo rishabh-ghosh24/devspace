@@ -66,6 +66,7 @@ class OCILogAnalyticsClient:
         time_start: str,
         time_end: str,
         max_results: Optional[int] = None,
+        include_subcompartments: bool = False,
     ) -> Dict[str, Any]:
         """Execute a Log Analytics query.
 
@@ -74,6 +75,7 @@ class OCILogAnalyticsClient:
             time_start: Start time in ISO 8601 format.
             time_end: End time in ISO 8601 format.
             max_results: Maximum number of results to return.
+            include_subcompartments: If True, include logs from sub-compartments.
 
         Returns:
             Dictionary containing query results and metadata.
@@ -98,6 +100,7 @@ class OCILogAnalyticsClient:
 
         query_details = oci.log_analytics.models.QueryDetails(
             compartment_id=self._compartment_id,
+            compartment_id_in_subtree=include_subcompartments,
             query_string=query_string,
             sub_system=oci.log_analytics.models.QueryDetails.SUB_SYSTEM_LOG,
             time_filter=time_range,

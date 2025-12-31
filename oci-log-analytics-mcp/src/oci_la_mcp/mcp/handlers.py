@@ -197,6 +197,7 @@ class MCPHandlers:
             time_start=args.get("time_start"),
             time_end=args.get("time_end"),
             max_results=args.get("max_results"),
+            include_subcompartments=args.get("include_subcompartments", False),
         )
         return [{"type": "text", "text": json.dumps(result, indent=2, default=str)}]
 
@@ -226,7 +227,10 @@ class MCPHandlers:
 
     async def _run_batch_queries(self, args: Dict) -> List[Dict]:
         """Run batch queries."""
-        results = await self.query_engine.execute_batch(args["queries"])
+        results = await self.query_engine.execute_batch(
+            args["queries"],
+            include_subcompartments=args.get("include_subcompartments", False),
+        )
         return [{"type": "text", "text": json.dumps(results, indent=2, default=str)}]
 
     async def _visualize(self, args: Dict) -> List[Dict]:
@@ -237,6 +241,7 @@ class MCPHandlers:
             time_range=args.get("time_range", "last_1_hour"),
             time_start=args.get("time_start"),
             time_end=args.get("time_end"),
+            include_subcompartments=args.get("include_subcompartments", False),
         )
 
         # Log for debugging
@@ -273,6 +278,7 @@ class MCPHandlers:
             time_range=args.get("time_range", "last_1_hour"),
             time_start=args.get("time_start"),
             time_end=args.get("time_end"),
+            include_subcompartments=args.get("include_subcompartments", False),
         )
 
         exported = self.export_service.export(

@@ -37,6 +37,7 @@ class QueryEngine:
         time_end: Optional[str] = None,
         time_range: Optional[str] = None,
         max_results: Optional[int] = None,
+        include_subcompartments: bool = False,
         use_cache: bool = True,
     ) -> Dict[str, Any]:
         """Execute a Log Analytics query.
@@ -47,6 +48,7 @@ class QueryEngine:
             time_end: Absolute end time (ISO 8601).
             time_range: Relative time range (e.g., 'last_1_hour').
             max_results: Maximum number of results to return.
+            include_subcompartments: If True, include logs from sub-compartments.
             use_cache: Whether to use cached results.
 
         Returns:
@@ -55,8 +57,8 @@ class QueryEngine:
         # Parse time parameters
         start, end = parse_time_range(time_start, time_end, time_range)
 
-        # Check cache
-        cache_key = self._make_cache_key(query, start, end)
+        # Check cache (include subcompartments flag in cache key)
+        cache_key = self._make_cache_key(query, start, end, include_subcompartments)
         if use_cache:
             cached = self.cache.get(cache_key)
             if cached:
@@ -70,6 +72,7 @@ class QueryEngine:
                 time_start=start.isoformat(),
                 time_end=end.isoformat(),
                 max_results=max_results,
+                include_subcompartments=include_subcompartments,
             )
 
             execution_time = (datetime.now() - start_time).total_seconds()
@@ -103,11 +106,16 @@ class QueryEngine:
             )
             raise
 
-    async def execute_batch(self, queries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def execute_batch(
+        self,
+        queries: List[Dict[str, Any]],
+        include_subcompartments: bool = False,
+    ) -> List[Dict[str, Any]]:
         """Execute multiple queries concurrently.
 
         Args:
             queries: List of query dictionaries with query parameters.
+            include_subcompartments: If True, include logs from sub-compartments.
 
         Returns:
             List of result dictionaries.
@@ -119,6 +127,7 @@ class QueryEngine:
                 time_end=q.get("time_end"),
                 time_range=q.get("time_range"),
                 max_results=q.get("max_results"),
+                include_subcompartments=q.get("include_subcompartments", include_subcompartments),
             )
             for q in queries
         ]
@@ -132,15 +141,23 @@ class QueryEngine:
             for r in results
         ]
 
-    def _make_cache_key(self, query: str, start: datetime, end: datetime) -> str:
+    def _make_cache_key(
+        self,
+        query: str,
+        start: datetime,
+        end: datetime,
+        include_subcompartments: bool = False,
+    ) -> str:
         """Generate cache key for a query.
 
         Args:
             query: The query string.
             start: Start time.
             end: End time.
+            include_subcompartments: Whether sub-compartments are included.
 
         Returns:
             Cache key string.
         """
-        return f"{query}:{start.isoformat()}:{end.isoformat()}"
+        sub_flag = "sub" if include_subcompartments else "nosub"
+        return f"{query}:{start.isoformat()}:{end.isoformat()}:{sub_flag}"
