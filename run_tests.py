@@ -503,6 +503,57 @@ class MCPServerTester:
             self.validate_tenancy_scope
         )
 
+        print("\n" + "=" * 60)
+        print("PHASE 10: Helper Tools (P0-P1)")
+        print("=" * 60 + "\n")
+
+        # H1: Test connection (critical health check)
+        await self.run_test(
+            "H1", "Test connection (health check)", "P0",
+            "test_connection", {},
+            lambda d: (
+                isinstance(d, dict) and d.get("status", "").startswith("✓"),
+                f"Status: {d.get('status', 'unknown')}" if isinstance(d, dict) else "Invalid response"
+            )
+        )
+
+        # H2: Find compartment by name
+        await self.run_test(
+            "H2", "Find compartment by name", "P1",
+            "find_compartment", {"name": "prod"},
+            lambda d: (isinstance(d, dict), f"Found {d.get('found', 0)} matches" if isinstance(d, dict) else "Error")
+        )
+
+        # H3: Get query examples
+        await self.run_test(
+            "H3", "Get query examples", "P1",
+            "get_query_examples", {"category": "all"},
+            lambda d: (
+                isinstance(d, dict) and "examples" in d,
+                f"Categories: {d.get('categories', [])}" if isinstance(d, dict) else "Error"
+            )
+        )
+
+        # H4: Get log summary
+        await self.run_test(
+            "H4", "Get log summary", "P1",
+            "get_log_summary", {"time_range": "last_24_hours"},
+            lambda d: (
+                isinstance(d, dict) and "total_logs" in d,
+                f"Total: {d.get('total_logs', 0):,} logs, {d.get('sources_with_data', 0)} sources" if isinstance(d, dict) else "Error"
+            )
+        )
+
+        # H5: Get log summary (tenancy scope)
+        await self.run_test(
+            "H5", "Get log summary (tenancy scope)", "P1",
+            "get_log_summary", {"time_range": "last_24_hours", "scope": "tenancy"},
+            lambda d: (
+                isinstance(d, dict) and "total_logs" in d,
+                f"Tenancy total: {d.get('total_logs', 0):,} logs" if isinstance(d, dict) else "Error"
+            )
+        )
+
     def print_summary(self):
         """Print test summary."""
         print("\n" + "=" * 60)

@@ -333,4 +333,73 @@ def get_tools() -> List[Dict[str, Any]]:
             "description": "List available compartments.",
             "inputSchema": {"type": "object", "properties": {}},
         },
+        # Helper Tools
+        {
+            "name": "test_connection",
+            "description": (
+                "Test the connection to OCI Log Analytics. Use this FIRST to verify "
+                "the server is properly configured and can connect to OCI. Returns "
+                "connection status, namespace, compartment, and a sample query result."
+            ),
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "find_compartment",
+            "description": (
+                "Find a compartment by name (fuzzy match). Use this when user mentions "
+                "a compartment by name like 'Production', 'Development', 'rishabh~', etc. "
+                "Returns matching compartments with their OCIDs that can be used in queries."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Compartment name or partial name to search for",
+                    }
+                },
+                "required": ["name"],
+            },
+        },
+        {
+            "name": "get_query_examples",
+            "description": (
+                "Get example Log Analytics queries for common use cases. Use this to help "
+                "construct queries when unsure of the syntax. Categories include: basic, "
+                "security, performance, errors, and statistics."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "enum": ["basic", "security", "performance", "errors", "statistics", "all"],
+                        "description": "Category of examples to return. Use 'all' for complete reference.",
+                    }
+                },
+            },
+        },
+        {
+            "name": "get_log_summary",
+            "description": (
+                "Get a summary of available log data - which log sources have data and "
+                "approximate counts. Use this to understand what data is available before "
+                "constructing queries. Helps avoid querying empty log sources."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "time_range": {
+                        "type": "string",
+                        "enum": ["last_1_hour", "last_24_hours", "last_7_days"],
+                        "description": "Time range to check for data. Default: last_24_hours",
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["default", "tenancy"],
+                        "description": "Scope: 'default' for current compartment, 'tenancy' for all compartments.",
+                    },
+                },
+            },
+        },
     ]

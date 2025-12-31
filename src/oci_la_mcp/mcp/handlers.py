@@ -85,6 +85,11 @@ class MCPHandlers:
             "set_namespace": self._set_namespace,
             "get_current_context": self._get_current_context,
             "list_compartments": self._list_compartments,
+            # Helper tools
+            "test_connection": self._test_connection,
+            "find_compartment": self._find_compartment,
+            "get_query_examples": self._get_query_examples,
+            "get_log_summary": self._get_log_summary,
         }
 
         handler = handlers.get(name)
@@ -356,3 +361,338 @@ class MCPHandlers:
         """List compartments."""
         compartments = await self.oci_client.list_compartments()
         return [{"type": "text", "text": json.dumps(compartments, indent=2)}]
+
+    async def _test_connection(self, args: Dict) -> List[Dict]:
+        """Test connection to OCI Log Analytics."""
+        result = {
+            "status": "unknown",
+            "checks": [],
+            "context": {},
+            "sample_query": None,
+        }
+
+        try:
+            # Check 1: Basic context
+            result["context"] = {
+                "namespace": self.oci_client.namespace,
+                "compartment_id": self.oci_client.compartment_id,
+                "tenancy_id": self.oci_client._config.get("tenancy", "unknown"),
+            }
+            result["checks"].append({"name": "Configuration loaded", "status": "✓ OK"})
+
+            # Check 2: List compartments (tests Identity API)
+            try:
+                compartments = await self.oci_client.list_compartments()
+                result["checks"].append({
+                    "name": "Identity API (list compartments)",
+                    "status": f"✓ OK - Found {len(compartments)} compartments"
+                })
+            except Exception as e:
+                result["checks"].append({
+                    "name": "Identity API",
+                    "status": f"✗ FAILED - {str(e)[:100]}"
+                })
+
+            # Check 3: List log sources (tests Log Analytics API)
+            try:
+                sources = await self.oci_client.list_log_sources()
+                result["checks"].append({
+                    "name": "Log Analytics API (list sources)",
+                    "status": f"✓ OK - Found {len(sources)} log sources"
+                })
+            except Exception as e:
+                result["checks"].append({
+                    "name": "Log Analytics API",
+                    "status": f"✗ FAILED - {str(e)[:100]}"
+                })
+
+            # Check 4: Run a simple query
+            try:
+                query_result = await self.query_engine.execute(
+                    query="* | stats count",
+                    time_range="last_1_hour",
+                    use_cache=False,
+                )
+                count = query_result.get("data", {}).get("total_count", 0)
+                result["checks"].append({
+                    "name": "Query execution",
+                    "status": f"✓ OK - {count:,} logs in last hour"
+                })
+                result["sample_query"] = {
+                    "query": "* | stats count",
+                    "time_range": "last_1_hour",
+                    "result_count": count,
+                }
+            except Exception as e:
+                result["checks"].append({
+                    "name": "Query execution",
+                    "status": f"✗ FAILED - {str(e)[:100]}"
+                })
+
+            # Overall status
+            failed = [c for c in result["checks"] if "FAILED" in c["status"]]
+            if not failed:
+                result["status"] = "✓ All systems operational"
+            else:
+                result["status"] = f"✗ {len(failed)} check(s) failed"
+
+        except Exception as e:
+            result["status"] = f"✗ Connection test failed: {str(e)}"
+
+        return [{"type": "text", "text": json.dumps(result, indent=2)}]
+
+    async def _find_compartment(self, args: Dict) -> List[Dict]:
+        """Find compartment by name using fuzzy matching."""
+        search_name = args.get("name", "").lower()
+
+        if not search_name:
+            return [{"type": "text", "text": json.dumps({
+                "error": "Please provide a compartment name to search for"
+            }, indent=2)}]
+
+        try:
+            compartments = await self.oci_client.list_compartments()
+
+            # Score and rank matches
+            matches = []
+            for comp in compartments:
+                name = comp.get("name", "").lower()
+                score = 0
+
+                # Exact match
+                if name == search_name:
+                    score = 100
+                # Starts with
+                elif name.startswith(search_name):
+                    score = 80
+                # Contains
+                elif search_name in name:
+                    score = 60
+                # Partial match (any word)
+                elif any(word in name for word in search_name.split()):
+                    score = 40
+
+                if score > 0:
+                    matches.append({
+                        "name": comp.get("name"),
+                        "id": comp.get("id"),
+                        "description": comp.get("description", ""),
+                        "match_score": score,
+                    })
+
+            # Sort by score
+            matches.sort(key=lambda x: x["match_score"], reverse=True)
+
+            if matches:
+                result = {
+                    "found": len(matches),
+                    "matches": matches[:10],  # Top 10
+                    "hint": "Use the 'id' field as compartment_id in your queries",
+                }
+            else:
+                result = {
+                    "found": 0,
+                    "matches": [],
+                    "suggestion": f"No compartments matching '{args.get('name')}'. Use list_compartments to see all available compartments.",
+                }
+
+            return [{"type": "text", "text": json.dumps(result, indent=2)}]
+
+        except Exception as e:
+            return [{"type": "text", "text": json.dumps({
+                "error": f"Failed to search compartments: {str(e)}"
+            }, indent=2)}]
+
+    async def _get_query_examples(self, args: Dict) -> List[Dict]:
+        """Get example queries for common use cases."""
+        examples = {
+            "basic": [
+                {
+                    "name": "Count all logs",
+                    "query": "* | stats count",
+                    "description": "Get total count of all logs",
+                },
+                {
+                    "name": "Count by log source",
+                    "query": "* | stats count by 'Log Source'",
+                    "description": "Break down log count by source type",
+                },
+                {
+                    "name": "Recent logs",
+                    "query": "* | head 100",
+                    "description": "Get the 100 most recent log entries",
+                },
+                {
+                    "name": "Search by keyword",
+                    "query": "* | where Message contains 'error'",
+                    "description": "Find logs containing specific text",
+                },
+            ],
+            "security": [
+                {
+                    "name": "Failed logins",
+                    "query": "'Log Source' = 'Linux Secure Logs' | where Message contains 'Failed password'",
+                    "description": "Find failed SSH login attempts",
+                },
+                {
+                    "name": "Authentication events",
+                    "query": "* | where Label = 'Authentication'",
+                    "description": "All authentication-related events",
+                },
+                {
+                    "name": "Sudo commands",
+                    "query": "'Log Source' = 'Linux Secure Logs' | where Message contains 'sudo'",
+                    "description": "Track sudo usage",
+                },
+            ],
+            "errors": [
+                {
+                    "name": "All errors",
+                    "query": "* | where Severity in ('ERROR', 'CRITICAL', 'FATAL')",
+                    "description": "Find all error-level logs",
+                },
+                {
+                    "name": "Errors by source",
+                    "query": "* | where Severity = 'ERROR' | stats count by 'Log Source'",
+                    "description": "Count errors per log source",
+                },
+                {
+                    "name": "Error trends",
+                    "query": "* | where Severity = 'ERROR' | timestats count by 'Log Source'",
+                    "description": "Error count over time by source",
+                },
+                {
+                    "name": "Exception traces",
+                    "query": "* | where Message contains 'Exception' or Message contains 'Traceback'",
+                    "description": "Find stack traces and exceptions",
+                },
+            ],
+            "performance": [
+                {
+                    "name": "Slow operations",
+                    "query": "* | where Message contains 'slow' or Message contains 'timeout'",
+                    "description": "Find performance-related issues",
+                },
+                {
+                    "name": "Response times",
+                    "query": "* | where Message regex '\\\\d+ms' | head 100",
+                    "description": "Logs mentioning millisecond timings",
+                },
+            ],
+            "statistics": [
+                {
+                    "name": "Logs by entity",
+                    "query": "* | stats count by Entity",
+                    "description": "Count logs per monitored entity",
+                },
+                {
+                    "name": "Logs by severity",
+                    "query": "* | stats count by Severity",
+                    "description": "Distribution of log severity levels",
+                },
+                {
+                    "name": "Top log sources",
+                    "query": "* | stats count by 'Log Source' | sort -count | head 10",
+                    "description": "Top 10 log sources by volume",
+                },
+                {
+                    "name": "Hourly volume",
+                    "query": "* | timestats count span=1h",
+                    "description": "Log volume per hour",
+                },
+            ],
+        }
+
+        category = args.get("category", "all")
+
+        if category == "all":
+            result = {
+                "categories": list(examples.keys()),
+                "examples": examples,
+                "tip": "Use these as starting points. Modify the queries based on your specific log sources and fields.",
+            }
+        elif category in examples:
+            result = {
+                "category": category,
+                "examples": examples[category],
+            }
+        else:
+            result = {
+                "error": f"Unknown category '{category}'",
+                "available": list(examples.keys()),
+            }
+
+        return [{"type": "text", "text": json.dumps(result, indent=2)}]
+
+    async def _get_log_summary(self, args: Dict) -> List[Dict]:
+        """Get summary of available log data."""
+        time_range = args.get("time_range", "last_24_hours")
+        compartment_id, include_subs = self._resolve_scope(args)
+
+        try:
+            # Query to get log counts by source
+            result = await self.query_engine.execute(
+                query="* | stats count by 'Log Source' | sort -count",
+                time_range=time_range,
+                include_subcompartments=include_subs,
+                compartment_id=compartment_id,
+                use_cache=False,
+            )
+
+            data = result.get("data", {})
+            rows = data.get("rows", [])
+            columns = data.get("columns", [])
+
+            # Parse results
+            sources_with_data = []
+            total_logs = 0
+
+            # Find column indices
+            source_idx = 0
+            count_idx = 1
+            for i, col in enumerate(columns):
+                if col.get("name") == "Log Source":
+                    source_idx = i
+                elif col.get("name") == "count":
+                    count_idx = i
+
+            for row in rows:
+                if len(row) > max(source_idx, count_idx):
+                    source_name = row[source_idx]
+                    count = int(row[count_idx]) if row[count_idx] else 0
+                    if count > 0:
+                        sources_with_data.append({
+                            "source": source_name,
+                            "count": count,
+                        })
+                        total_logs += count
+
+            summary = {
+                "time_range": time_range,
+                "scope": "tenancy" if include_subs else "default_compartment",
+                "compartment_id": result.get("metadata", {}).get("compartment_id", "unknown"),
+                "total_logs": total_logs,
+                "sources_with_data": len(sources_with_data),
+                "top_sources": sources_with_data[:10],
+                "recommendation": self._get_summary_recommendation(sources_with_data, total_logs),
+            }
+
+            return [{"type": "text", "text": json.dumps(summary, indent=2)}]
+
+        except Exception as e:
+            return [{"type": "text", "text": json.dumps({
+                "error": f"Failed to get log summary: {str(e)}",
+                "suggestion": "Try running test_connection first to verify connectivity",
+            }, indent=2)}]
+
+    def _get_summary_recommendation(self, sources: list, total: int) -> str:
+        """Generate recommendation based on log summary."""
+        if total == 0:
+            return "No logs found in this time range. Try a longer time range or check scope."
+        elif len(sources) == 1:
+            return f"Only one log source has data: {sources[0]['source']}. Queries will be focused on this source."
+        elif len(sources) > 10:
+            return f"You have {len(sources)} active log sources. Consider filtering by 'Log Source' for better performance."
+        else:
+            top_source = sources[0]['source'] if sources else "N/A"
+            return f"Top log source is '{top_source}'. Use list_log_sources to see all available sources."
