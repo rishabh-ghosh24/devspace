@@ -196,7 +196,10 @@ class MCPHandlers:
         if isinstance(include_subs, str):
             include_subs = include_subs.lower() in ("true", "yes", "1")
 
-        logger.info(f"run_query: include_subcompartments={include_subs}, args={args}")
+        # Get optional compartment_id override
+        compartment_id = args.get("compartment_id")
+
+        logger.info(f"run_query: include_subcompartments={include_subs}, compartment_id={compartment_id}, args={args}")
 
         result = await self.query_engine.execute(
             query=args["query"],
@@ -205,6 +208,7 @@ class MCPHandlers:
             time_end=args.get("time_end"),
             max_results=args.get("max_results"),
             include_subcompartments=include_subs,
+            compartment_id=compartment_id,
         )
         return [{"type": "text", "text": json.dumps(result, indent=2, default=str)}]
 
@@ -237,6 +241,7 @@ class MCPHandlers:
         results = await self.query_engine.execute_batch(
             args["queries"],
             include_subcompartments=args.get("include_subcompartments", False),
+            compartment_id=args.get("compartment_id"),
         )
         return [{"type": "text", "text": json.dumps(results, indent=2, default=str)}]
 
@@ -249,6 +254,7 @@ class MCPHandlers:
             time_start=args.get("time_start"),
             time_end=args.get("time_end"),
             include_subcompartments=args.get("include_subcompartments", False),
+            compartment_id=args.get("compartment_id"),
         )
 
         # Log for debugging
@@ -286,6 +292,7 @@ class MCPHandlers:
             time_start=args.get("time_start"),
             time_end=args.get("time_end"),
             include_subcompartments=args.get("include_subcompartments", False),
+            compartment_id=args.get("compartment_id"),
         )
 
         exported = self.export_service.export(

@@ -39,6 +39,7 @@ class QueryEngine:
         max_results: Optional[int] = None,
         include_subcompartments: bool = False,
         use_cache: bool = True,
+        compartment_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute a Log Analytics query.
 
@@ -50,6 +51,7 @@ class QueryEngine:
             max_results: Maximum number of results to return.
             include_subcompartments: If True, include logs from sub-compartments.
             use_cache: Whether to use cached results.
+            compartment_id: Optional compartment OCID override.
 
         Returns:
             Dictionary containing query results and metadata.
@@ -57,12 +59,25 @@ class QueryEngine:
         # Parse time parameters
         start, end = parse_time_range(time_start, time_end, time_range)
 
-        # Check cache (include subcompartments flag in cache key)
-        cache_key = self._make_cache_key(query, start, end, include_subcompartments)
+        # Determine which compartment to use
+        effective_compartment = compartment_id or self.oci_client.compartment_id
+
+        # Check cache (include subcompartments flag and compartment in cache key)
+        cache_key = self._make_cache_key(query, start, end, include_subcompartments, effective_compartment)
         if use_cache:
             cached = self.cache.get(cache_key)
             if cached:
-                return {"source": "cache", "data": cached}
+                return {
+                    "source": "cache",
+                    "data": cached,
+                    "metadata": {
+                        "query": query,
+                        "compartment_id": effective_compartment,
+                        "time_start": start.isoformat(),
+                        "time_end": end.isoformat(),
+                        "include_subcompartments": include_subcompartments,
+                    },
+                }
 
         # Execute query
         start_time = datetime.now()
@@ -73,6 +88,7 @@ class QueryEngine:
                 time_end=end.isoformat(),
                 max_results=max_results,
                 include_subcompartments=include_subcompartments,
+                compartment_id=compartment_id,
             )
 
             execution_time = (datetime.now() - start_time).total_seconds()
@@ -91,7 +107,18 @@ class QueryEngine:
                 success=True,
             )
 
-            return {"source": "live", "data": result}
+            return {
+                "source": "live",
+                "data": result,
+                "metadata": {
+                    "query": query,
+                    "compartment_id": effective_compartment,
+                    "time_start": start.isoformat(),
+                    "time_end": end.isoformat(),
+                    "include_subcompartments": include_subcompartments,
+                    "execution_time_seconds": execution_time,
+                },
+            }
 
         except Exception as e:
             execution_time = (datetime.now() - start_time).total_seconds()
@@ -110,12 +137,14 @@ class QueryEngine:
         self,
         queries: List[Dict[str, Any]],
         include_subcompartments: bool = False,
+        compartment_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Execute multiple queries concurrently.
 
         Args:
             queries: List of query dictionaries with query parameters.
             include_subcompartments: If True, include logs from sub-compartments.
+            compartment_id: Default compartment OCID for all queries.
 
         Returns:
             List of result dictionaries.
@@ -128,6 +157,7 @@ class QueryEngine:
                 time_range=q.get("time_range"),
                 max_results=q.get("max_results"),
                 include_subcompartments=q.get("include_subcompartments", include_subcompartments),
+                compartment_id=q.get("compartment_id", compartment_id),
             )
             for q in queries
         ]
@@ -147,6 +177,7 @@ class QueryEngine:
         start: datetime,
         end: datetime,
         include_subcompartments: bool = False,
+        compartment_id: Optional[str] = None,
     ) -> str:
         """Generate cache key for a query.
 
@@ -155,9 +186,11 @@ class QueryEngine:
             start: Start time.
             end: End time.
             include_subcompartments: Whether sub-compartments are included.
+            compartment_id: Compartment OCID.
 
         Returns:
             Cache key string.
         """
         sub_flag = "sub" if include_subcompartments else "nosub"
-        return f"{query}:{start.isoformat()}:{end.isoformat()}:{sub_flag}"
+        comp = compartment_id or "default"
+        return f"{query}:{start.isoformat()}:{end.isoformat()}:{sub_flag}:{comp}"

@@ -133,6 +133,10 @@ def get_tools() -> List[Dict[str, Any]]:
                         "type": "boolean",
                         "description": "If true, include logs from all sub-compartments of the current compartment. Default: false",
                     },
+                    "compartment_id": {
+                        "type": "string",
+                        "description": "Optional compartment OCID to query. Use tenancy OCID (ocid1.tenancy...) to query entire tenancy. If not specified, uses default compartment from config.",
+                    },
                 },
                 "required": ["query"],
             },
@@ -168,6 +172,7 @@ def get_tools() -> List[Dict[str, Any]]:
                                 "query": {"type": "string"},
                                 "time_range": {"type": "string"},
                                 "include_subcompartments": {"type": "boolean"},
+                                "compartment_id": {"type": "string"},
                             },
                             "required": ["query"],
                         },
@@ -176,6 +181,10 @@ def get_tools() -> List[Dict[str, Any]]:
                     "include_subcompartments": {
                         "type": "boolean",
                         "description": "Default for all queries: if true, include logs from sub-compartments. Can be overridden per-query.",
+                    },
+                    "compartment_id": {
+                        "type": "string",
+                        "description": "Default compartment OCID for all queries. Can be overridden per-query.",
                     },
                 },
                 "required": ["queries"],
@@ -221,6 +230,10 @@ def get_tools() -> List[Dict[str, Any]]:
                         "type": "boolean",
                         "description": "If true, include logs from all sub-compartments. Default: false",
                     },
+                    "compartment_id": {
+                        "type": "string",
+                        "description": "Optional compartment OCID to query. If not specified, uses default compartment from config.",
+                    },
                 },
                 "required": ["query", "chart_type"],
             },
@@ -257,6 +270,10 @@ def get_tools() -> List[Dict[str, Any]]:
                     "include_subcompartments": {
                         "type": "boolean",
                         "description": "If true, include logs from all sub-compartments. Default: false",
+                    },
+                    "compartment_id": {
+                        "type": "string",
+                        "description": "Optional compartment OCID to query. If not specified, uses default compartment from config.",
                     },
                 },
                 "required": ["query", "format"],

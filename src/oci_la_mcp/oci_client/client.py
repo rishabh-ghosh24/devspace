@@ -136,6 +136,7 @@ class OCILogAnalyticsClient:
         time_end: str,
         max_results: Optional[int] = None,
         include_subcompartments: bool = False,
+        compartment_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute a Log Analytics query.
 
@@ -145,6 +146,7 @@ class OCILogAnalyticsClient:
             time_end: End time in ISO 8601 format.
             max_results: Maximum number of results to return.
             include_subcompartments: If True, include logs from sub-compartments.
+            compartment_id: Optional compartment OCID override.
 
         Returns:
             Dictionary containing query results and metadata.
@@ -152,11 +154,14 @@ class OCILogAnalyticsClient:
         Raises:
             oci.exceptions.ServiceError: If OCI API call fails.
         """
+        # Use provided compartment_id or fall back to default
+        effective_compartment = compartment_id or self._compartment_id
+
         # File-based debug logging (check ~/.oci-la-mcp/debug.log)
         _debug(f"=== QUERY START ===")
-        _debug(f"compartment_id: {self._compartment_id}")
+        _debug(f"compartment_id: {effective_compartment} (override: {compartment_id is not None})")
         _debug(f"include_subcompartments: {include_subcompartments}")
-        is_tenancy = self._is_tenancy_ocid(self._compartment_id)
+        is_tenancy = self._is_tenancy_ocid(effective_compartment)
         _debug(f"is_tenancy_ocid: {is_tenancy}")
 
         # Check if we need to handle tenancy-level cross-compartment query
@@ -170,7 +175,7 @@ class OCILogAnalyticsClient:
         _debug("TAKING PATH: _execute_single_query (single compartment)")
         return await self._execute_single_query(
             query_string, time_start, time_end, max_results,
-            self._compartment_id, include_subcompartments
+            effective_compartment, include_subcompartments
         )
 
     async def _execute_single_query(
