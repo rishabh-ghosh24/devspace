@@ -389,9 +389,9 @@ echo "============================================================"
 echo "  STEP 8: Configure Scripts"
 echo "============================================================"
 
-# Make start.sh executable (it's already in the repo)
-chmod +x "$INSTALL_DIR/start.sh"
-log_success "start.sh configured"
+# Make scripts executable
+chmod +x "$INSTALL_DIR/update.sh" "$INSTALL_DIR/run.sh"
+log_success "Scripts configured"
 
 # Create test script
 cat > "$INSTALL_DIR/test_connection.sh" << 'EOF'
@@ -498,16 +498,13 @@ echo ""
 echo "  1. Test the connection:"
 echo "     $INSTALL_DIR/test_connection.sh"
 echo ""
-echo "  2. Start the MCP server (auto-updates first):"
-echo "     $INSTALL_DIR/start.sh"
+echo "  2. Update and restart server:"
+echo "     $INSTALL_DIR/update.sh"
 echo ""
-echo "  3. Start without checking for updates:"
-echo "     $INSTALL_DIR/start.sh --no-update"
+echo "  3. Just run the server (no update):"
+echo "     $INSTALL_DIR/run.sh"
 echo ""
-echo "  4. Update only (don't start server):"
-echo "     $INSTALL_DIR/start.sh --update"
-echo ""
-echo "  5. Run tests:"
+echo "  4. Run tests:"
 echo "     cd $INSTALL_DIR && source venv/bin/activate && pytest"
 echo ""
 echo "MCP Client Configuration:"
@@ -516,8 +513,7 @@ echo "For Claude Desktop (add to claude_desktop_config.json):"
 echo '  {'
 echo '    "mcpServers": {'
 echo '      "oci-log-analytics": {'
-echo "        \"command\": \"$INSTALL_DIR/start.sh\","
-echo '        "args": ["--no-update"]'
+echo "        \"command\": \"$INSTALL_DIR/run.sh\""
 echo '      }'
 echo '    }'
 echo '  }'
@@ -531,7 +527,8 @@ if [[ "$ADD_PATH" =~ ^[Yy]$ ]]; then
     echo "" >> ~/.bashrc
     echo "# OCI Log Analytics MCP Server" >> ~/.bashrc
     echo "export PATH=\"$INSTALL_DIR/venv/bin:\$PATH\"" >> ~/.bashrc
-    echo "alias oci-la-mcp='$INSTALL_DIR/start.sh'" >> ~/.bashrc
+    echo "alias oci-la-mcp-update='$INSTALL_DIR/update.sh'" >> ~/.bashrc
+    echo "alias oci-la-mcp='$INSTALL_DIR/run.sh'" >> ~/.bashrc
     log_success "Added to ~/.bashrc. Run 'source ~/.bashrc' or restart your shell."
 fi
 
