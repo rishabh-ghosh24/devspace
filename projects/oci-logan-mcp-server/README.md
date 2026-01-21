@@ -17,7 +17,7 @@ A Model Context Protocol (MCP) server that enables AI assistants like Claude to 
 
 - Oracle Linux 9 (or compatible) VM
 - OCI CLI configured with valid credentials (`~/.oci/config`)
-- Python 3.9+
+- Python 3.10+
 
 ### Installation
 
@@ -139,4 +139,4 @@ See `TEST_PLAN.md` and `CLAUDE_DESKTOP_TESTS.md` for comprehensive test cases.
 
 ## License
 
-GPL-3.0 - See LICENSE file
+MIT - See LICENSE file

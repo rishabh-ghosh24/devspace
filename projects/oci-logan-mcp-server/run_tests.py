@@ -61,8 +61,7 @@ class MCPServerTester:
         print("\nInitializing...")
 
         try:
-            config = load_config()
-            self.settings = Settings(**config)
+            self.settings = load_config()
             oci_client = OCILogAnalyticsClient(self.settings)
             cache = CacheManager()
             query_logger = QueryLogger()
