@@ -203,8 +203,10 @@ if [ -d "$INSTALL_DIR" ]; then
     fi
 fi
 
-REPO_URL="https://github.com/rishabh-ghosh24/devspace.git"
-BRANCH="claude/restore-oci-analytics-ZxSQg"
+# Configure these variables for your repository
+REPO_URL="${OCI_MCP_REPO_URL:-https://github.com/<your-github-username>/<your-repo>.git}"
+# (e.g., https://github.com/myorg/oci-mcp.git)
+BRANCH="${OCI_MCP_BRANCH:-main}"
 
 if [ ! -d "$INSTALL_DIR" ]; then
     log_info "Cloning MCP server from repository..."

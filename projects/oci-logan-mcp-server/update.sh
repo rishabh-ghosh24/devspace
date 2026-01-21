@@ -22,7 +22,8 @@ if [ ! -d ".git" ]; then
     exit 1
 fi
 
-BRANCH="claude/restore-oci-analytics-ZxSQg"
+# Configure this for your repository branch (or set OCI_MCP_BRANCH env var)
+BRANCH="${OCI_MCP_BRANCH:-main}"
 
 # Fetch and check for updates
 echo "Checking for updates..."

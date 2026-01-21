@@ -347,7 +347,7 @@ def get_tools() -> List[Dict[str, Any]]:
             "name": "find_compartment",
             "description": (
                 "Find a compartment by name (fuzzy match). Use this when user mentions "
-                "a compartment by name like 'Production', 'Development', 'rishabh~', etc. "
+                "a compartment by name like 'Production', 'Development', 'shared-infra', etc."
                 "Returns matching compartments with their OCIDs that can be used in queries."
             ),
             "inputSchema": {

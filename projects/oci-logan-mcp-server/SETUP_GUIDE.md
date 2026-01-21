@@ -8,7 +8,8 @@ For a fully automated setup, run:
 
 ```bash
 # Download and run the setup script
-curl -sSL https://raw.githubusercontent.com/rishabh-ghosh24/devspace/main/oci-log-analytics-mcp/setup_oel9.sh | bash
+curl -sSL https://raw.githubusercontent.com/<your-github-username>/<your-repo>/main/projects/oci-logan-mcp-server/setup_oel9.sh | bash
+# (e.g., https://raw.githubusercontent.com/myorg/oci-mcp/main/projects/oci-logan-mcp-server/setup_oel9.sh)
 
 # Or if you have the repo cloned:
 cd oci-log-analytics-mcp
@@ -129,17 +130,19 @@ oci iam region list --output table
 ### Step 5: Clone/Download the MCP Server
 
 ```bash
-# Clone from repository (specific branch)
-git clone -b claude/restore-oci-analytics-ZxSQg https://github.com/rishabh-ghosh24/devspace.git ~/devspace-clone
-mv ~/devspace-clone/oci-log-analytics-mcp ~/oci-log-analytics-mcp
+# Clone from repository
+git clone https://github.com/<your-github-username>/<your-repo>.git ~/devspace-clone
+# (e.g., git clone https://github.com/myorg/oci-mcp.git ~/devspace-clone)
+
+mv ~/devspace-clone/projects/oci-logan-mcp-server ~/oci-log-analytics-mcp
 rm -rf ~/devspace-clone
 
 # Set up git for updates
 cd ~/oci-log-analytics-mcp
 git init
-git remote add origin https://github.com/rishabh-ghosh24/devspace.git
-git fetch origin claude/restore-oci-analytics-ZxSQg
-git checkout -b claude/restore-oci-analytics-ZxSQg --track origin/claude/restore-oci-analytics-ZxSQg
+git remote add origin https://github.com/<your-github-username>/<your-repo>.git
+git fetch origin main
+git checkout -b main --track origin/main
 ```
 
 ---
@@ -299,7 +302,7 @@ To update to the latest version:
 
 # Option 2: Manual update
 cd ~/oci-log-analytics-mcp
-git pull origin claude/restore-oci-analytics-ZxSQg
+git pull origin main
 source venv/bin/activate
 pip install -e .
 ```
