@@ -1,0 +1,282 @@
+{
+  "dashboards": [
+    {
+      "displayName": "FinOps - Cost Forecast",
+      "description": "Cost trend analysis, projections, and anomaly detection",
+      "providerId": "log-analytics",
+      "providerName": "Log Analytics",
+      "providerVersion": "3.0.0",
+      "isOobDashboard": false,
+      "isShowInHome": false,
+      "isShowDescription": true,
+      "metadataVersion": "2.0",
+      "type": "normal",
+      "tiles": [
+        {
+          "displayName": "CURRENT MONTH SPEND",
+          "row": 0,
+          "column": 0,
+          "height": 2,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-current-month"
+        },
+        {
+          "displayName": "LAST MONTH SPEND",
+          "row": 0,
+          "column": 3,
+          "height": 2,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-last-month"
+        },
+        {
+          "displayName": "MONTH-OVER-MONTH CHANGE",
+          "row": 0,
+          "column": 6,
+          "height": 2,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-mom-change"
+        },
+        {
+          "displayName": "PROJECTED MONTHLY SPEND",
+          "row": 0,
+          "column": 9,
+          "height": 2,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-projected-monthly"
+        },
+        {
+          "displayName": "DAILY COST TREND (30 DAYS)",
+          "row": 2,
+          "column": 0,
+          "height": 3,
+          "width": 8,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-daily-trend-30d"
+        },
+        {
+          "displayName": "AVERAGE DAILY COST",
+          "row": 2,
+          "column": 8,
+          "height": 3,
+          "width": 4,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-avg-daily-cost"
+        },
+        {
+          "displayName": "COST ANOMALIES",
+          "row": 5,
+          "column": 0,
+          "height": 3,
+          "width": 6,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-cost-anomalies"
+        },
+        {
+          "displayName": "WEEKLY COMPARISON",
+          "row": 5,
+          "column": 6,
+          "height": 3,
+          "width": 6,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-weekly-comparison"
+        },
+        {
+          "displayName": "TOP GROWING SERVICES",
+          "row": 8,
+          "column": 0,
+          "height": 3,
+          "width": 6,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-top-growing"
+        },
+        {
+          "displayName": "TOP SHRINKING SERVICES",
+          "row": 8,
+          "column": 6,
+          "height": 3,
+          "width": 6,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-top-shrinking"
+        }
+      ],
+      "savedSearches": [
+        {
+          "id": "finops-current-month",
+          "displayName": "Current Month Spend",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "tile",
+            "visualizationOptions": {
+              "formatNumber": true
+            },
+            "queryString": "'Log Source' = FOCUS_OCI | where substr(formatDate(Time, 'yyyy-MM'), 1, 7) = substr(formatDate(now(), 'yyyy-MM'), 1, 7) | stats sum(oci_AttributedCost) as 'MTD'",
+            "timeSelection": {
+              "numUnits": 31,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-last-month",
+          "displayName": "Last Month Spend",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "tile",
+            "visualizationOptions": {
+              "formatNumber": true
+            },
+            "queryString": "'Log Source' = FOCUS_OCI | where Time >= dateRelative(60day) and Time < dateRelative(30day) | stats sum(oci_AttributedCost) as 'Last Month'",
+            "timeSelection": {
+              "numUnits": 60,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-mom-change",
+          "displayName": "Month-over-Month Change",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "tile",
+            "queryString": "'Log Source' = FOCUS_OCI | eval month = formatDate(Time, 'yyyy-MM') | stats sum(oci_AttributedCost) as Cost by month | sort month | tail 2 | eval change = round(((Cost - lag(Cost)) / lag(Cost)) * 100, 1) | tail 1 | fields change",
+            "timeSelection": {
+              "numUnits": 60,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-projected-monthly",
+          "displayName": "Projected Monthly Spend",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "tile",
+            "visualizationOptions": {
+              "formatNumber": true
+            },
+            "queryString": "'Log Source' = FOCUS_OCI | where substr(formatDate(Time, 'yyyy-MM'), 1, 7) = substr(formatDate(now(), 'yyyy-MM'), 1, 7) | stats sum(oci_AttributedCost) as MTD, dcount(formatDate(Time, 'dd')) as DaysElapsed | eval DaysInMonth = 30 | eval Projected = round((MTD / DaysElapsed) * DaysInMonth, 2) | fields Projected",
+            "timeSelection": {
+              "numUnits": 31,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-daily-trend-30d",
+          "displayName": "Daily Cost Trend",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "line",
+            "queryString": "'Log Source' = FOCUS_OCI | timestats span=1day sum(oci_AttributedCost) as 'Daily Cost'",
+            "timeSelection": {
+              "numUnits": 30,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-avg-daily-cost",
+          "displayName": "Average Daily Cost by Service",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "hbar",
+            "queryString": "'Log Source' = FOCUS_OCI | timestats span=1day sum(oci_AttributedCost) as DailyCost by ServiceName | stats avg(DailyCost) as AvgDaily by ServiceName | top limit=10 AvgDaily",
+            "timeSelection": {
+              "numUnits": 30,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-cost-anomalies",
+          "displayName": "Daily Cost Anomalies (>2 Std Dev)",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "table",
+            "queryString": "'Log Source' = FOCUS_OCI | timestats span=1day sum(oci_AttributedCost) as DailyCost | stats avg(DailyCost) as AvgCost, stddev(DailyCost) as StdDev by * | eval UpperBound = AvgCost + (2 * StdDev) | eval LowerBound = AvgCost - (2 * StdDev) | join type=inner ('Log Source' = FOCUS_OCI | timestats span=1day sum(oci_AttributedCost) as DailyCost) | where DailyCost > UpperBound or DailyCost < LowerBound | fields Time, DailyCost, AvgCost, UpperBound, LowerBound | sort -Time | head 10",
+            "timeSelection": {
+              "numUnits": 30,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-weekly-comparison",
+          "displayName": "Weekly Cost Comparison",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "records_histogram",
+            "queryString": "'Log Source' = FOCUS_OCI | eval week = formatDate(Time, 'yyyy-ww') | timestats span=1week sum(oci_AttributedCost) as 'Weekly Cost'",
+            "timeSelection": {
+              "numUnits": 60,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-top-growing",
+          "displayName": "Top Growing Services (7d vs Prior 7d)",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "table",
+            "queryString": "'Log Source' = FOCUS_OCI | eval period = if(Time >= dateRelative(7day), 'Current', 'Previous') | where Time >= dateRelative(14day) | stats sum(oci_AttributedCost) as Cost by ServiceName, period | pivot ServiceName, period in (Cost) | eval Change = round(((Current - Previous) / Previous) * 100, 1) | where Change > 0 | sort -Change | head 10",
+            "timeSelection": {
+              "numUnits": 14,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-top-shrinking",
+          "displayName": "Top Shrinking Services (7d vs Prior 7d)",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "table",
+            "queryString": "'Log Source' = FOCUS_OCI | eval period = if(Time >= dateRelative(7day), 'Current', 'Previous') | where Time >= dateRelative(14day) | stats sum(oci_AttributedCost) as Cost by ServiceName, period | pivot ServiceName, period in (Cost) | eval Change = round(((Current - Previous) / Previous) * 100, 1) | where Change < 0 | sort Change | head 10",
+            "timeSelection": {
+              "numUnits": 14,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        }
+      ],
+      "uiConfig": {
+        "isFilteringEnabled": true,
+        "isTimeRangeEnabled": true,
+        "isRefreshEnabled": true
+      },
+      "parametersConfig": [
+        {
+          "name": "time",
+          "displayName": "Time Range",
+          "required": true,
+          "src": "$(context.time)"
+        }
+      ]
+    }
+  ]
+}

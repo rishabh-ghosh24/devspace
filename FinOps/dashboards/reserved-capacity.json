@@ -1,0 +1,234 @@
+{
+  "dashboards": [
+    {
+      "displayName": "FinOps - Reserved Capacity",
+      "description": "Track committed use discounts, reservation utilization, and savings vs on-demand pricing",
+      "providerId": "log-analytics",
+      "providerName": "Log Analytics",
+      "providerVersion": "3.0.0",
+      "isOobDashboard": false,
+      "isShowInHome": false,
+      "isShowDescription": true,
+      "metadataVersion": "2.0",
+      "type": "normal",
+      "tiles": [
+        {
+          "displayName": "COMMITTED USAGE",
+          "row": 0,
+          "column": 0,
+          "height": 2,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-committed-usage"
+        },
+        {
+          "displayName": "ON-DEMAND USAGE",
+          "row": 0,
+          "column": 3,
+          "height": 2,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-ondemand-usage"
+        },
+        {
+          "displayName": "ESTIMATED SAVINGS",
+          "row": 0,
+          "column": 6,
+          "height": 2,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-estimated-savings"
+        },
+        {
+          "displayName": "COMMITMENT UTILIZATION",
+          "row": 0,
+          "column": 9,
+          "height": 2,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-commitment-utilization"
+        },
+        {
+          "displayName": "USAGE BY CHARGE TYPE",
+          "row": 2,
+          "column": 0,
+          "height": 3,
+          "width": 6,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-usage-by-charge-type"
+        },
+        {
+          "displayName": "COMMITMENT TREND",
+          "row": 2,
+          "column": 6,
+          "height": 3,
+          "width": 6,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-commitment-trend"
+        },
+        {
+          "displayName": "TOP COMMITTED SERVICES",
+          "row": 5,
+          "column": 0,
+          "height": 3,
+          "width": 6,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-top-committed-services"
+        },
+        {
+          "displayName": "UNDERUTILIZED COMMITMENTS",
+          "row": 5,
+          "column": 6,
+          "height": 3,
+          "width": 6,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-underutilized-commitments"
+        }
+      ],
+      "savedSearches": [
+        {
+          "id": "finops-committed-usage",
+          "displayName": "Total Committed Usage",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "tile",
+            "visualizationOptions": {
+              "formatNumber": true
+            },
+            "queryString": "'Log Source' = FOCUS_OCI | where ChargeType = 'Usage' and CommitmentDiscountType != null | stats sum(oci_AttributedCost) as 'Committed'",
+            "timeSelection": {
+              "numUnits": 30,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-ondemand-usage",
+          "displayName": "On-Demand Usage",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "tile",
+            "visualizationOptions": {
+              "formatNumber": true
+            },
+            "queryString": "'Log Source' = FOCUS_OCI | where ChargeType = 'Usage' and (CommitmentDiscountType = null or CommitmentDiscountType = '') | stats sum(oci_AttributedCost) as 'On-Demand'",
+            "timeSelection": {
+              "numUnits": 30,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-estimated-savings",
+          "displayName": "Estimated Savings from Commitments",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "tile",
+            "visualizationOptions": {
+              "formatNumber": true
+            },
+            "queryString": "'Log Source' = FOCUS_OCI | where CommitmentDiscountType != null | stats sum(oci_AttributedCost * 0.25) as 'Est. Savings'",
+            "timeSelection": {
+              "numUnits": 30,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-commitment-utilization",
+          "displayName": "Commitment Utilization %",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "tile",
+            "queryString": "'Log Source' = FOCUS_OCI | where ChargeType = 'Usage' | eval committed = if(CommitmentDiscountType != null, oci_AttributedCost, 0) | stats sum(committed) as Used, sum(oci_AttributedCost) as Total | eval Utilization = round((Used/Total)*100, 1) | fields Utilization",
+            "timeSelection": {
+              "numUnits": 30,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-usage-by-charge-type",
+          "displayName": "Cost by Charge Type",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "pie",
+            "queryString": "'Log Source' = FOCUS_OCI | eval ChargeCategory = if(CommitmentDiscountType != null, 'Committed', ChargeType) | stats sum(oci_AttributedCost) as Cost by ChargeCategory | top Cost",
+            "timeSelection": {
+              "numUnits": 30,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-commitment-trend",
+          "displayName": "Committed vs On-Demand Trend",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "records_histogram",
+            "queryString": "'Log Source' = FOCUS_OCI | where ChargeType = 'Usage' | eval ChargeCategory = if(CommitmentDiscountType != null, 'Committed', 'On-Demand') | timestats span=1day sum(oci_AttributedCost) as Cost by ChargeCategory",
+            "timeSelection": {
+              "numUnits": 30,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-top-committed-services",
+          "displayName": "Top Services Using Commitments",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "hbar",
+            "queryString": "'Log Source' = FOCUS_OCI | where CommitmentDiscountType != null | stats sum(oci_AttributedCost) as Cost by ServiceName | top limit=10 Cost",
+            "timeSelection": {
+              "numUnits": 30,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-underutilized-commitments",
+          "displayName": "Services with Low Commitment Utilization",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "table",
+            "queryString": "'Log Source' = FOCUS_OCI | where ChargeType = 'Usage' | eval committed = if(CommitmentDiscountType != null, oci_AttributedCost, 0) | stats sum(committed) as CommittedCost, sum(oci_AttributedCost) as TotalCost by ServiceName | eval UtilizationPct = round((CommittedCost/TotalCost)*100, 1) | where UtilizationPct < 50 and TotalCost > 100 | sort UtilizationPct",
+            "timeSelection": {
+              "numUnits": 30,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        }
+      ],
+      "uiConfig": {
+        "isFilteringEnabled": true,
+        "isTimeRangeEnabled": true,
+        "isRefreshEnabled": true
+      },
+      "parametersConfig": [
+        {
+          "name": "time",
+          "displayName": "Time Range",
+          "required": true,
+          "src": "$(context.time)"
+        }
+      ]
+    }
+  ]
+}

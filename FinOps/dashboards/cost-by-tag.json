@@ -1,0 +1,204 @@
+{
+  "dashboards": [
+    {
+      "displayName": "FinOps - Cost by Tag",
+      "description": "Cost allocation by resource tags (team, project, environment, cost center)",
+      "providerId": "log-analytics",
+      "providerName": "Log Analytics",
+      "providerVersion": "3.0.0",
+      "isOobDashboard": false,
+      "isShowInHome": false,
+      "isShowDescription": true,
+      "metadataVersion": "2.0",
+      "type": "normal",
+      "tiles": [
+        {
+          "displayName": "COST BY TEAM",
+          "row": 0,
+          "column": 0,
+          "height": 3,
+          "width": 4,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-cost-by-team"
+        },
+        {
+          "displayName": "COST BY PROJECT",
+          "row": 0,
+          "column": 4,
+          "height": 3,
+          "width": 4,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-cost-by-project"
+        },
+        {
+          "displayName": "COST BY ENVIRONMENT",
+          "row": 0,
+          "column": 8,
+          "height": 3,
+          "width": 4,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-cost-by-environment"
+        },
+        {
+          "displayName": "UNTAGGED RESOURCES COST",
+          "row": 3,
+          "column": 0,
+          "height": 2,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-untagged-cost"
+        },
+        {
+          "displayName": "TAGGING COMPLIANCE",
+          "row": 3,
+          "column": 3,
+          "height": 2,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-tagging-compliance"
+        },
+        {
+          "displayName": "TOP UNTAGGED RESOURCES",
+          "row": 3,
+          "column": 6,
+          "height": 3,
+          "width": 6,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-top-untagged"
+        },
+        {
+          "displayName": "COST TREND BY TEAM",
+          "row": 6,
+          "column": 0,
+          "height": 3,
+          "width": 12,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-trend-by-team"
+        }
+      ],
+      "savedSearches": [
+        {
+          "id": "finops-cost-by-team",
+          "displayName": "Cost by Team Tag",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "pie",
+            "queryString": "'Log Source' = FOCUS_OCI | eval Team = if(isNull('Tag - Team'), 'Untagged', 'Tag - Team') | stats sum(oci_AttributedCost) as Cost by Team | top Cost",
+            "timeSelection": {
+              "numUnits": 7,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-cost-by-project",
+          "displayName": "Cost by Project Tag",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "pie",
+            "queryString": "'Log Source' = FOCUS_OCI | eval Project = if(isNull('Tag - Project'), 'Untagged', 'Tag - Project') | stats sum(oci_AttributedCost) as Cost by Project | top Cost",
+            "timeSelection": {
+              "numUnits": 7,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-cost-by-environment",
+          "displayName": "Cost by Environment Tag",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "pie",
+            "queryString": "'Log Source' = FOCUS_OCI | eval Environment = if(isNull('Tag - Environment'), 'Untagged', 'Tag - Environment') | stats sum(oci_AttributedCost) as Cost by Environment | top Cost",
+            "timeSelection": {
+              "numUnits": 7,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-untagged-cost",
+          "displayName": "Untagged Resources Cost",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "tile",
+            "visualizationOptions": {
+              "formatNumber": true
+            },
+            "queryString": "'Log Source' = FOCUS_OCI | where isNull('Tag - Team') and isNull('Tag - Project') | stats sum(oci_AttributedCost) as 'Untagged Cost'",
+            "timeSelection": {
+              "numUnits": 7,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-tagging-compliance",
+          "displayName": "Tagging Compliance %",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "tile",
+            "queryString": "'Log Source' = FOCUS_OCI | eval tagged = if(isNull('Tag - Team') and isNull('Tag - Project'), 0, 1) | stats sum(tagged) as Tagged, count(*) as Total | eval Compliance = round((Tagged/Total)*100, 1) | fields Compliance",
+            "timeSelection": {
+              "numUnits": 7,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-top-untagged",
+          "displayName": "Top Untagged Resources by Cost",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "table",
+            "queryString": "'Log Source' = FOCUS_OCI | where isNull('Tag - Team') and isNull('Tag - Project') | stats sum(oci_AttributedCost) as Cost by ResourceName, ServiceName, oci_CompartmentName | top limit=20 Cost",
+            "timeSelection": {
+              "numUnits": 7,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-trend-by-team",
+          "displayName": "Cost Trend by Team",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "records_histogram",
+            "queryString": "'Log Source' = FOCUS_OCI | eval Team = if(isNull('Tag - Team'), 'Untagged', 'Tag - Team') | timestats span=1day sum(oci_AttributedCost) as Cost by Team",
+            "timeSelection": {
+              "numUnits": 14,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        }
+      ],
+      "uiConfig": {
+        "isFilteringEnabled": true,
+        "isTimeRangeEnabled": true,
+        "isRefreshEnabled": true
+      },
+      "parametersConfig": [
+        {
+          "name": "time",
+          "displayName": "Time Range",
+          "required": true,
+          "src": "$(context.time)"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,210 @@
+{
+  "dashboards": [
+    {
+      "displayName": "FinOps Overview",
+      "description": "OCI FinOps dashboard showing cost overview, overage, consumption, and top spenders",
+      "providerId": "log-analytics",
+      "providerName": "Log Analytics",
+      "providerVersion": "3.0.0",
+      "isOobDashboard": false,
+      "isShowInHome": true,
+      "isShowDescription": true,
+      "metadataVersion": "2.0",
+      "type": "normal",
+      "tiles": [
+        {
+          "displayName": "TOTAL OVERAGE",
+          "row": 0,
+          "column": 0,
+          "height": 2,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-total-overage"
+        },
+        {
+          "displayName": "TOTAL CONSUMPTION",
+          "row": 0,
+          "column": 3,
+          "height": 2,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-total-consumption"
+        },
+        {
+          "displayName": "MONTHLY COST",
+          "row": 0,
+          "column": 6,
+          "height": 2,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-monthly-cost"
+        },
+        {
+          "displayName": "COST TREND",
+          "row": 2,
+          "column": 0,
+          "height": 3,
+          "width": 6,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-cost-trend"
+        },
+        {
+          "displayName": "TOP COMPARTMENTS",
+          "row": 2,
+          "column": 6,
+          "height": 3,
+          "width": 3,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-top-compartments"
+        },
+        {
+          "displayName": "TOP SERVICES",
+          "row": 5,
+          "column": 0,
+          "height": 3,
+          "width": 4,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-top-services"
+        },
+        {
+          "displayName": "COST BY COMPARTMENT",
+          "row": 5,
+          "column": 4,
+          "height": 3,
+          "width": 5,
+          "state": "DEFAULT",
+          "savedSearchId": "finops-cost-by-compartment"
+        }
+      ],
+      "savedSearches": [
+        {
+          "id": "finops-total-overage",
+          "displayName": "Total Overage",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "tile",
+            "visualizationOptions": {
+              "formatNumber": true
+            },
+            "queryString": "'Log Source' = FOCUS_OCI | stats sum(oci_CostOverage) as 'Overage'",
+            "timeSelection": {
+              "numUnits": 7,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-total-consumption",
+          "displayName": "Total Consumption",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "tile",
+            "visualizationOptions": {
+              "formatNumber": true
+            },
+            "queryString": "'Log Source' = FOCUS_OCI | stats sum(oci_AttributedCost) as 'Total Cost'",
+            "timeSelection": {
+              "numUnits": 7,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-monthly-cost",
+          "displayName": "Monthly Cost",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "tile",
+            "visualizationOptions": {
+              "formatNumber": true
+            },
+            "queryString": "'Log Source' = FOCUS_OCI and Time > dateRelative(31day) | where substr(formatDate(Time, 'MM/dd/yyyy'), 1, 2) = substr(formatDate(now(), 'MM/dd/yyyy'), 1, 2) | stats sum(oci_AttributedCost) as 'MTD Cost'",
+            "timeSelection": {
+              "numUnits": 31,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-cost-trend",
+          "displayName": "Daily Cost Trend",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "records_histogram",
+            "queryString": "'Log Source' = FOCUS_OCI | timestats span=1day sum(oci_AttributedCost) as 'Daily Cost' by oci_CompartmentName",
+            "timeSelection": {
+              "numUnits": 14,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-top-compartments",
+          "displayName": "Top Compartments by Cost",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "hbar",
+            "queryString": "'Log Source' = FOCUS_OCI | stats sum(oci_AttributedCost) as Cost by oci_CompartmentName | top limit=10 Cost",
+            "timeSelection": {
+              "numUnits": 7,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-top-services",
+          "displayName": "Top Services",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "cloud",
+            "queryString": "'Log Source' = FOCUS_OCI | stats sum(oci_AttributedCost) as Cost by ServiceName | top limit=20 Cost",
+            "timeSelection": {
+              "numUnits": 7,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        },
+        {
+          "id": "finops-cost-by-compartment",
+          "displayName": "Cost Distribution by Compartment",
+          "providerVersion": "3.0.0",
+          "type": "WIDGET_SHOW_IN_DASHBOARD",
+          "uiConfig": {
+            "visualizationType": "pie",
+            "queryString": "'Log Source' = FOCUS_OCI | stats sum(oci_AttributedCost) as Cost by oci_CompartmentName | top Cost",
+            "timeSelection": {
+              "numUnits": 7,
+              "units": "DAYS",
+              "timePeriod": "relative"
+            }
+          }
+        }
+      ],
+      "uiConfig": {
+        "isFilteringEnabled": true,
+        "isTimeRangeEnabled": true,
+        "isRefreshEnabled": true
+      },
+      "parametersConfig": [
+        {
+          "name": "time",
+          "displayName": "Time Range",
+          "required": true,
+          "src": "$(context.time)"
+        }
+      ]
+    }
+  ]
+}
