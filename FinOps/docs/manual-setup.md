@@ -168,6 +168,11 @@ fn update context oracle.compartment-id <your-compartment-ocid>
 fn update context registry fra.ocir.io/<namespace>/<repo-prefix>
 ```
 
+> **Note:** The repo name should be lowercase and can include hyphens.
+> Example: `fn update context registry fra.ocir.io/frxfz3gch4zb/finops-app`
+
+Or follow steps 2-4 under your Functions app **Getting Started** > **Cloud Shell setup** in the OCI Console.
+
 ### 6.2 Clone and Deploy
 
 ```bash
