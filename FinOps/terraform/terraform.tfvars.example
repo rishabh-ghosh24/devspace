@@ -1,0 +1,72 @@
+# ============================================================================
+# OCI FinOps Solution - Example Terraform Variables
+# ============================================================================
+#
+# Copy this file to terraform.tfvars and fill in your values:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# ============================================================================
+
+# -----------------------------------------------------------------------------
+# Required - Your OCI Tenancy Information
+# -----------------------------------------------------------------------------
+
+# Your tenancy OCID (find in OCI Console > Tenancy Details)
+tenancy_ocid = "ocid1.tenancy.oc1..aaaaaaaa..."
+
+# Compartment where resources will be created
+compartment_ocid = "ocid1.compartment.oc1..aaaaaaaa..."
+
+# OCI region (e.g., us-ashburn-1, eu-frankfurt-1, ap-tokyo-1)
+region = "us-ashburn-1"
+
+# -----------------------------------------------------------------------------
+# Optional - Customize Names
+# -----------------------------------------------------------------------------
+
+# Project name prefix for all resources
+# project_name = "finops"
+
+# Environment (dev, staging, prod)
+# environment = "prod"
+
+# -----------------------------------------------------------------------------
+# Optional - Object Storage
+# -----------------------------------------------------------------------------
+
+# Bucket name for FOCUS reports
+# bucket_name = "finops-focus-reports"
+
+# How long to keep reports (days, 0 = forever)
+# bucket_retention_days = 365
+
+# -----------------------------------------------------------------------------
+# Optional - Function Settings
+# -----------------------------------------------------------------------------
+
+# Number of days to look back for reports
+# function_lookback_days = 5
+
+# Function schedule (cron expression, UTC)
+# Default: Daily at 6 AM UTC
+# function_schedule_cron = "0 6 * * *"
+
+# -----------------------------------------------------------------------------
+# Optional - Notifications
+# -----------------------------------------------------------------------------
+
+# Email for alert notifications (leave empty to skip)
+# notification_email = "finops-team@example.com"
+
+# Cost overage threshold for alerts
+# alert_threshold_overage = 100
+
+# -----------------------------------------------------------------------------
+# Optional - Tags
+# -----------------------------------------------------------------------------
+
+# freeform_tags = {
+#   "Project"     = "FinOps"
+#   "ManagedBy"   = "Terraform"
+#   "CostCenter"  = "IT"
+# }
