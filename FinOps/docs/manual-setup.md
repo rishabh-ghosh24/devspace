@@ -64,6 +64,18 @@ Navigate to **Identity & Security** > **Policies**
      ```
 3. Click **Create**
 
+> **Note: Identity Domains**
+>
+> If your dynamic groups are in the **OracleIdentityCloudService** domain (not Default), you must qualify the group name with the domain. Use this syntax instead:
+>
+> ```
+> define tenancy usage-report as ocid1.tenancy.oc1..aaaaaaaaned4fkpkisbwjlr56u7cj63lf3wffbilvqknstgtvzub7vhqkggq
+> endorse dynamic-group 'OracleIdentityCloudService'/'finops-function-dg' to read objects in tenancy usage-report
+> allow dynamic-group 'OracleIdentityCloudService'/'finops-function-dg' to manage objects in compartment <your-compartment>
+> allow dynamic-group 'OracleIdentityCloudService'/'finops-function-dg' to inspect compartments in tenancy
+> allow dynamic-group 'OracleIdentityCloudService'/'finops-function-dg' to inspect tenancies in tenancy
+> ```
+
 ### Log Analytics Policy
 
 1. Click **Create Policy**
@@ -81,6 +93,19 @@ Navigate to **Identity & Security** > **Policies**
      allow dynamic-group finops-logan-dg to {STREAM_CONSUME} in tenancy
      ```
 3. Click **Create**
+
+> **Note: Identity Domains**
+>
+> For **OracleIdentityCloudService** domain, use this syntax instead:
+>
+> ```
+> allow dynamic-group 'OracleIdentityCloudService'/'finops-logan-dg' to read buckets in tenancy
+> allow dynamic-group 'OracleIdentityCloudService'/'finops-logan-dg' to read objects in tenancy
+> allow dynamic-group 'OracleIdentityCloudService'/'finops-logan-dg' to manage cloudevents-rules in tenancy
+> allow dynamic-group 'OracleIdentityCloudService'/'finops-logan-dg' to inspect compartments in tenancy
+> allow dynamic-group 'OracleIdentityCloudService'/'finops-logan-dg' to use tag-namespaces in tenancy
+> allow dynamic-group 'OracleIdentityCloudService'/'finops-logan-dg' to {STREAM_CONSUME} in tenancy
+> ```
 
 ## Step 4: Create Streaming
 
@@ -125,19 +150,59 @@ Note the Stream OCID for later steps.
 
 ## Step 6: Deploy Function
 
-Using OCI Cloud Shell or local terminal:
+Using OCI Cloud Shell:
+
+### 6.1 Setup fn CLI
+
+```bash
+# List available contexts
+fn list context
+
+# Use your region context (e.g., eu-frankfurt-1)
+fn use context eu-frankfurt-1
+
+# Set compartment ID
+fn update context oracle.compartment-id <your-compartment-ocid>
+
+# Set container registry (replace with your region and namespace)
+fn update context registry fra.ocir.io/<namespace>/<repo-prefix>
+```
+
+### 6.2 Clone and Deploy
 
 ```bash
 # Clone the repository
-git clone <repo-url>
-cd FinOps/function
+git clone https://github.com/rishabh-ghosh24/devspace.git
+cd devspace/FinOps/function
 
-# Configure fn CLI
-fn use context <your-context>
-
-# Deploy
+# Deploy the function
 fn deploy --app finops-app
 ```
+
+### 6.3 Verify Deployment
+
+After deployment, invoke the function to verify it works:
+
+```bash
+fn invoke finops-app focus-report-copier
+```
+
+Expected output:
+```json
+{
+  "status": "Success",
+  "stats": {
+    "days_processed": 5,
+    "files_copied": 5,
+    "files_skipped": 0,
+    "errors": []
+  }
+}
+```
+
+Check your Object Storage bucket (`finops-focus-reports`) - you should see FOCUS report files under the `FOCUS Reports/` folder.
+
+**If successful, proceed to Step 7.** If there are errors, check the [Troubleshooting Guide](troubleshooting.md).
 
 ## Step 7: Create Function Schedule
 
@@ -204,10 +269,18 @@ oci log-analytics object-collection-rule create \
 4. Select the log group when prompted
 5. Click **Import**
 
-## Step 12: Test the Setup
+## Step 12: Test the Setup (Optional)
+
+> **Note:** This step is optional if you already verified the function in Step 6.3. Use this for troubleshooting or re-testing after configuration changes.
 
 ### Invoke Function Manually
 
+Using fn CLI (simpler):
+```bash
+fn invoke finops-app focus-report-copier
+```
+
+Or using OCI CLI:
 ```bash
 oci fn function invoke \
   --function-id <function-ocid> \
