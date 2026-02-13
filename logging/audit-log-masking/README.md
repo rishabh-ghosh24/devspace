@@ -67,7 +67,7 @@ audit-log-masking/
 **1. Deploy the function**
 
 - Deploy the Function as per guidelines in OCI under 'Getting started'
-- replace the default func.py with the one in this repo and finally run the **fn deploy** command
+- Replace the default func.py with the one in this repo and finally run the **fn deploy** command
 
 **2. Create the Service Connector**
 
