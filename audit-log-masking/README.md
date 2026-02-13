@@ -1,10 +1,11 @@
 # OCI Audit Log Masking for External SIEM
 
-An OCI Function that masks replayable authentication credentials from OCI Audit Logs before they leave your tenancy - deployed inline via Service Connector Hub.
+Use Configure Function Task option in Service Connector to mask sensitive data present in OCI Audit Logs while integrating this log data with an external SIEM solution.
+This OCI Function masks replayable authentication credentials from OCI Audit Logs before they leave your tenancy.
 
 ## Why
 
-OCI Audit Logs carry sensitive headers and tokens in cleartext:
+OCI Audit Logs may carry sensitive headers and tokens in cleartext:
 
 - `request.headers.Authorization` - API signing keys (`Signature keyId="ST$..."`)
 - `request.headers.opc-principal` - full service auth context with embedded JWTs and session tokens
@@ -26,7 +27,8 @@ Shipping these to an external SIEM (Securonix, Splunk, QRadar, Sentinel) creates
                         │  └───────────────┘  │               ▼
                         └─────────────────────┘      ┌───────────────────┐
                                                      │  External SIEM    │
-                                                     │  (Securonix, etc) │
+                                                     │ (Splunk, Sentinel │
+                                                     │ etc)              │
                                                      └───────────────────┘
 ```
 
@@ -57,8 +59,6 @@ Redacted fields appear as `[REDACTED]` in the output.
 ```
 audit-log-masking/
 ├── func.py              # Masking function (deploy this)
-├── func.yaml            # OCI Functions config
-├── requirements.txt     # Python dependencies (fdk only)
 └── verify_masking.py    # Verification script for testing
 ```
 
@@ -66,10 +66,8 @@ audit-log-masking/
 
 **1. Deploy the function**
 
-```bash
-cd audit-log-masking
-fn deploy --app <your-fn-application-name>
-```
+- Deploy the Function as per guidelines in OCI under 'Getting started'
+- replace the default func.py with the one in this repo and finally run the **fn deploy** command
 
 **2. Create the Service Connector**
 
