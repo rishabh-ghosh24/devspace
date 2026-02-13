@@ -1,15 +1,15 @@
 # OCI Audit Log Masking for External SIEM
 
-An OCI Function that masks replayable authentication credentials from OCI Audit Logs before they leave your tenancy — deployed inline via Service Connector Hub.
+An OCI Function that masks replayable authentication credentials from OCI Audit Logs before they leave your tenancy - deployed inline via Service Connector Hub.
 
 ## Why
 
 OCI Audit Logs carry sensitive headers and tokens in cleartext:
 
-- `request.headers.Authorization` — API signing keys (`Signature keyId="ST$..."`)
-- `request.headers.opc-principal` — full service auth context with embedded JWTs and session tokens
-- `request.headers.opc-obo-principal` — delegated auth tokens
-- `identity.credentials` — session tokens (when not pre-masked by OCI)
+- `request.headers.Authorization` - API signing keys (`Signature keyId="ST$..."`)
+- `request.headers.opc-principal` - full service auth context with embedded JWTs and session tokens
+- `request.headers.opc-obo-principal` - delegated auth tokens
+- `identity.credentials` - session tokens (when not pre-masked by OCI)
 - Bearer / Basic tokens in any header value
 
 Shipping these to an external SIEM (Securonix, Splunk, QRadar, Sentinel) creates a credential exfiltration risk. This function redacts them in-flight while preserving everything the SIEM needs for detection: who, from where, what, on what resource, and outcome.
@@ -31,10 +31,10 @@ Shipping these to an external SIEM (Securonix, Splunk, QRadar, Sentinel) creates
 ```
 
 **Source:** Logging → `_Audit` (all compartments)
-**Task:** This function — masks sensitive fields
+**Task:** This function masks sensitive fields
 **Target:** OCI Streaming → forwarded to external SIEM
 
-> **Note:** Service Connector Hub does not support the function task when the target is Logging Analytics directly. Use Streaming as an intermediary.
+> **Note:** Service Connector Hub does not support the function task when the target is OCI Log Analytics directly. Use Streaming as an intermediary.
 
 ## What Gets Masked vs Preserved
 
@@ -135,6 +135,3 @@ SECRET_VALUE_PATTERNS = [
 
 The function never breaks the log pipeline. On any error (bad JSON, unexpected structure, exception), it returns the original payload unchanged with HTTP 200. Worst case: unmasked logs. Never lost logs.
 
-## Author
-
-**Rishabh Ghosh** — rishabh.g.ghosh@oracle.com
