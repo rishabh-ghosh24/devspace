@@ -10,7 +10,7 @@ OCI Audit Logs may carry sensitive headers and tokens in cleartext:
 - `request.headers.Authorization` - API signing keys (`Signature keyId="ST$..."`)
 - `request.headers.opc-principal` - full service auth context with embedded JWTs and session tokens
 - `request.headers.opc-obo-principal` - delegated auth tokens
-- `identity.credentials` - session tokens (when not pre-masked by OCI)
+- `identity.credentials` -  redacted by key name (OCI often pre-masks this to ***; the function ensures consistent [REDACTED] output regardless)
 - Bearer / Basic tokens in any header value
 
 Shipping these to an external SIEM (Securonix, Splunk, QRadar, Sentinel) creates a credential exfiltration risk. This function redacts them in-flight while preserving everything the SIEM needs for detection: who, from where, what, on what resource, and outcome.
