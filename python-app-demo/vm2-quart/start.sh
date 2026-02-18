@@ -35,4 +35,4 @@ export OTEL_PYTHON_LOG_CORRELATION="true"
 exec /home/opc/.local/bin/opentelemetry-instrument \
     /home/opc/.local/bin/hypercorn app:app \
     --bind 0.0.0.0:8080 \
-    --workers 2
+    --workers 1
