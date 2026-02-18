@@ -21,7 +21,7 @@ export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=demo,service.version=1.0
 export OTEL_EXPORTER_OTLP_ENDPOINT="${APM_ENDPOINT}/20200101/opentelemetry"
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=dataKey ${APM_DATA_KEY}"
 
-export OTEL_TRACES_EXPORTER="otlp"
+export OTEL_TRACES_EXPORTER="otlp_proto_http"
 export OTEL_METRICS_EXPORTER="none"
 export OTEL_LOGS_EXPORTER="none"
 
