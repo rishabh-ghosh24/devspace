@@ -9,9 +9,13 @@ A presales demo showing end-to-end distributed tracing through OCI APM. The appl
     │ HTTP :80
     ▼
 [VM1 — Apache httpd]          reverse proxy (pyapp1)
+    │  service: stayeasy-webserver
+    │  OTel Apache module → OTel Collector → OCI APM
+    │  auto-injects traceparent header
     │ HTTP :8080 (private)
     ▼
 [VM2 — Hypercorn]             ASGI server (pyapp2)
+    │  service: stayeasy-hotel-app
     │
     ├── asgi.py               ← OTel init + ASGI middleware (entry point)
     ├── otel_setup.py         ← all OTel config (exporter, oracledb instrumentor)
@@ -19,9 +23,12 @@ A presales demo showing end-to-end distributed tracing through OCI APM. The appl
     ├── db.py                 ← Oracle ADB connection (thin mode, TLS)
     │       │
     │       ▼
-    │   [Oracle ADB]          5 tables: hotels, rooms, guests, reservations, payments
+    │   [Oracle ADB]          peer.service: oracle-adb
+    │                         5 tables: hotels, rooms, guests, reservations, payments
     │
     └──→ OTel OTLP/HTTP ──→ OCI APM
+
+APM Topology: stayeasy-webserver → stayeasy-hotel-app → oracle-adb
 ```
 
 ## Prerequisites
@@ -87,6 +94,36 @@ vi python-app-demo/vm1-apache/quart-demo.conf
 
 sudo cp python-app-demo/vm1-apache/quart-demo.conf /etc/httpd/conf.d/quart-demo.conf
 sudo systemctl reload httpd
+```
+
+### 2b. Install OpenTelemetry Apache module (optional — enables 3-service topology)
+
+This installs the OTel Apache module so Apache appears as `stayeasy-webserver` in APM and auto-injects `traceparent` headers.
+
+```bash
+# Run the install script
+sudo bash python-app-demo/vm1-apache/install-otel-apache.sh
+
+# Copy and edit the OTel config — set your APM endpoint
+sudo cp python-app-demo/vm1-apache/opentelemetry_module.conf /etc/httpd/conf.d/
+# Edit the exporter endpoint (default: localhost:4317 for local OTel Collector)
+
+# Install OTel Collector (bridges gRPC from Apache module → OTLP/HTTP to APM)
+# Download the collector binary
+curl -fSL https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.96.0/otelcol_0.96.0_linux_amd64.tar.gz -o /tmp/otelcol.tar.gz
+sudo mkdir -p /opt/otel-collector
+sudo tar -xzf /tmp/otelcol.tar.gz -C /opt/otel-collector/
+
+# Copy and edit collector config — set APM_DOMAIN, REGION, DATA_KEY
+sudo cp python-app-demo/vm1-apache/otel-collector-config.yaml /opt/otel-collector/
+sudo vi /opt/otel-collector/otel-collector-config.yaml
+
+# Start collector (run in background or create a systemd service)
+sudo /opt/otel-collector/otelcol --config /opt/otel-collector/otel-collector-config.yaml &
+
+# Restart Apache to load the OTel module
+sudo systemctl restart httpd
+httpd -M | grep otel   # Should show: otel_apache_module (shared)
 ```
 
 ---
@@ -222,7 +259,8 @@ The customer can verify: `grep -c opentelemetry app.py` → **0**
 | `db.system` | `oracle` |
 | `db.statement` | `SELECT * FROM hotels ORDER BY rating DESC` |
 | `db.operation` | `SELECT`, `INSERT` |
-| `service.name` | `stayeasy-hotel-app` |
+| `peer.service` | `oracle-adb` (DB spans) |
+| `service.name` | `stayeasy-hotel-app` (Quart), `stayeasy-webserver` (Apache) |
 
 ---
 

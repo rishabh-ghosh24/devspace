@@ -22,8 +22,31 @@ from opentelemetry.propagators.composite import CompositePropagator
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.instrumentation.dbapi import trace_integration
+from opentelemetry.sdk.trace import SpanProcessor
 
 log = logging.getLogger(__name__)
+
+
+class DbPeerServiceEnricher(SpanProcessor):
+    """Tags DB spans with peer.service so APM shows 'oracle-adb' in topology
+    instead of 'External Unknown'.
+
+    Only CLIENT-kind spans are tagged — DB instrumentor creates CLIENT spans
+    while ASGI middleware creates SERVER spans, so this cleanly targets DB only.
+    """
+
+    def on_start(self, span, parent_context=None):
+        if span.kind == trace.SpanKind.CLIENT:
+            span.set_attribute("peer.service", "oracle-adb")
+
+    def on_end(self, span):
+        pass
+
+    def shutdown(self):
+        pass
+
+    def force_flush(self, timeout_millis=None):
+        pass
 
 
 def init_otel(service_name: str = "stayeasy-hotel-app") -> None:
@@ -36,6 +59,9 @@ def init_otel(service_name: str = "stayeasy-hotel-app") -> None:
     })
 
     provider = TracerProvider(resource=resource)
+
+    # --- Enrich DB spans with peer.service for APM topology ---
+    provider.add_span_processor(DbPeerServiceEnricher())
 
     # --- OCI APM OTLP/HTTP exporter ---
     apm_endpoint = os.environ.get("APM_ENDPOINT", "")
