@@ -1,7 +1,50 @@
 import asyncio
+import os
 from quart import Quart, jsonify
 from db import get_db, seed
+
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.instrumentation.asgi import OpenTelemetryMiddleware
+from opentelemetry.propagate import set_global_textmap
+from opentelemetry.propagators.composite import CompositePropagator
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+from opentelemetry.baggage.propagation import W3CBaggagePropagator
+
+# --- OTel setup ---
+resource = Resource.create({
+    "service.name": os.environ.get("OTEL_SERVICE_NAME", "retail-quart-app"),
+    "deployment.environment": "demo",
+    "service.version": "1.0",
+})
+
+provider = TracerProvider(resource=resource)
+
+apm_endpoint = os.environ.get("APM_ENDPOINT", "")
+apm_key = os.environ.get("APM_DATA_KEY", "")
+
+if apm_endpoint and apm_key:
+    otlp_exporter = OTLPSpanExporter(
+        endpoint=f"{apm_endpoint}/20200101/opentelemetry/v1/traces",
+        headers={"Authorization": f"dataKey {apm_key}"},
+    )
+    provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+
+# Always add console exporter so we can see spans in logs
+provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+
+trace.set_tracer_provider(provider)
+set_global_textmap(CompositePropagator([
+    TraceContextTextMapPropagator(),
+    W3CBaggagePropagator(),
+]))
+
+# --- SQLite instrumentation ---
+from opentelemetry.instrumentation.sqlite3 import SQLite3Instrumentor
+SQLite3Instrumentor().instrument()
 
 app = Quart(__name__)
 app.asgi_app = OpenTelemetryMiddleware(app.asgi_app)
