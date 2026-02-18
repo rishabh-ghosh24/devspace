@@ -4,11 +4,56 @@ import os
 DB_PATH = os.path.join(os.path.dirname(__file__), "hotel.db")
 
 
+class TracedDB:
+    """Wraps a sqlite3 connection so .execute() routes through cursor.execute().
+
+    SQLite3Instrumentor only patches cursor-level execute(), not the
+    connection-level shortcut.  By delegating through a cursor every
+    query becomes a proper OTel span with db.system and db.statement
+    attributes — without changing a single line in app.py.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    # --- query methods (routed through cursor for OTel) ---
+    def execute(self, sql, params=()):
+        cur = self._conn.cursor()
+        cur.execute(sql, params)
+        return cur
+
+    def executemany(self, sql, seq):
+        cur = self._conn.cursor()
+        cur.executemany(sql, seq)
+        return cur
+
+    # --- pass-throughs (no spans needed) ---
+    def executescript(self, sql):
+        return self._conn.executescript(sql)
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
+    @property
+    def row_factory(self):
+        return self._conn.row_factory
+
+    @row_factory.setter
+    def row_factory(self, value):
+        self._conn.row_factory = value
+
+
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    return TracedDB(conn)
 
 
 def seed():
