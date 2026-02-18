@@ -240,6 +240,7 @@ Backup[ ]of[ ]*.numbers/
 
 # Claude Code
 .claude/
+CLAUDE.MD
 
 # Cursor
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
