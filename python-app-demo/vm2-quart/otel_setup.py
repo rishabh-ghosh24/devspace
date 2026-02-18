@@ -11,6 +11,7 @@ Called once from asgi.py before the Quart app is imported.
 import os
 import logging
 
+import oracledb
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -20,7 +21,7 @@ from opentelemetry.propagate import set_global_textmap
 from opentelemetry.propagators.composite import CompositePropagator
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
-from opentelemetry.instrumentation.sqlite3 import SQLite3Instrumentor
+from opentelemetry.instrumentation.dbapi import DatabaseApiIntegration
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ def init_otel(service_name: str = "stayeasy-hotel-app") -> None:
     resource = Resource.create({
         "service.name": os.environ.get("OTEL_SERVICE_NAME", service_name),
         "deployment.environment": "demo",
-        "service.version": "1.0",
+        "service.version": "2.0",
     })
 
     provider = TracerProvider(resource=resource)
@@ -58,6 +59,19 @@ def init_otel(service_name: str = "stayeasy-hotel-app") -> None:
         W3CBaggagePropagator(),
     ]))
 
-    # --- Auto-instrument SQLite ---
-    SQLite3Instrumentor().instrument()
-    log.info("SQLite3 instrumentation active")
+    # --- Auto-instrument oracledb (DB-API 2.0) ---
+    # This patches oracledb.connect() so every cursor.execute() becomes
+    # a span with db.system=oracle, db.statement=<SQL>, db.operation=SELECT/INSERT, etc.
+    DatabaseApiIntegration(
+        name="oracledb",
+        database_component="oracle",
+        database_type="oracle",
+        connection_attributes={
+            "database": "dsn",
+        },
+        tracer_provider=provider,
+    ).wrap_connect(
+        connect_module=oracledb,
+        connect_method_name="connect",
+    )
+    log.info("oracledb DB-API instrumentation active")

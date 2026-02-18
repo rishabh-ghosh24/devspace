@@ -9,6 +9,7 @@ import asyncio
 from datetime import datetime
 from quart import Quart, jsonify, request
 from db import get_db, seed
+import oracledb
 
 app = Quart(__name__)
 
@@ -18,6 +19,21 @@ LOYALTY_DISCOUNTS = {
     "silver":   0.05,
     "standard": 0.00,
 }
+
+
+def _dictfetchone(cursor):
+    """Fetch one row as a dict (lowercased column names), or None."""
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    columns = [col[0].lower() for col in cursor.description]
+    return dict(zip(columns, row))
+
+
+def _dictfetchall(cursor):
+    """Fetch all rows as a list of dicts (lowercased column names)."""
+    columns = [col[0].lower() for col in cursor.description]
+    return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
 @app.before_serving
@@ -52,10 +68,13 @@ async def index():
 # ──────────────────────────────────────────────────────────────
 @app.route("/hotels")
 async def list_hotels():
-    db = get_db()
-    rows = db.execute("SELECT * FROM hotels ORDER BY rating DESC").fetchall()
-    db.close()
-    return jsonify([dict(r) for r in rows])
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM hotels ORDER BY rating DESC")
+    rows = _dictfetchall(cur)
+    cur.close()
+    conn.close()
+    return jsonify(rows)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -63,22 +82,22 @@ async def list_hotels():
 # ──────────────────────────────────────────────────────────────
 @app.route("/hotels/<int:hotel_id>")
 async def get_hotel(hotel_id):
-    db = get_db()
-    hotel = db.execute(
-        "SELECT * FROM hotels WHERE id = ?", (hotel_id,)
-    ).fetchone()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM hotels WHERE id = :1", [hotel_id])
+    hotel = _dictfetchone(cur)
     if not hotel:
-        db.close()
+        cur.close()
+        conn.close()
         return jsonify({"error": "hotel not found"}), 404
 
-    rooms = db.execute(
-        "SELECT * FROM rooms WHERE hotel_id = ?", (hotel_id,)
-    ).fetchall()
-    db.close()
+    cur.execute("SELECT * FROM rooms WHERE hotel_id = :1", [hotel_id])
+    rooms = _dictfetchall(cur)
+    cur.close()
+    conn.close()
 
-    result = dict(hotel)
-    result["rooms"] = [dict(r) for r in rooms]
-    return jsonify(result)
+    hotel["rooms"] = rooms
+    return jsonify(hotel)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -86,12 +105,13 @@ async def get_hotel(hotel_id):
 # ──────────────────────────────────────────────────────────────
 @app.route("/hotels/<int:hotel_id>/rooms")
 async def hotel_rooms(hotel_id):
-    db = get_db()
-    rows = db.execute(
-        "SELECT * FROM rooms WHERE hotel_id = ?", (hotel_id,)
-    ).fetchall()
-    db.close()
-    return jsonify([dict(r) for r in rows])
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM rooms WHERE hotel_id = :1", [hotel_id])
+    rows = _dictfetchall(cur)
+    cur.close()
+    conn.close()
+    return jsonify(rows)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -117,30 +137,35 @@ async def search_rooms():
         return jsonify({"error": "check_out must be after check_in"}), 400
 
     nights = (co - ci).days
-    db = get_db()
+    conn = get_db()
+    cur = conn.cursor()
 
-    # Step 1 — find hotels in the city
-    hotels = db.execute(
-        "SELECT id, name, rating FROM hotels WHERE city = ? COLLATE NOCASE",
-        (city,)
-    ).fetchall()
+    # Step 1 — find hotels in the city (case-insensitive)
+    cur.execute(
+        "SELECT id, name, rating FROM hotels WHERE UPPER(city) = UPPER(:1)",
+        [city]
+    )
+    hotels = _dictfetchall(cur)
 
     available = []
     for hotel in hotels:
         # Step 2 — rooms with enough capacity
-        rooms = db.execute(
-            "SELECT * FROM rooms WHERE hotel_id = ? AND capacity >= ?",
-            (hotel["id"], guests)
-        ).fetchall()
+        cur.execute(
+            "SELECT * FROM rooms WHERE hotel_id = :1 AND capacity >= :2",
+            [hotel["id"], guests]
+        )
+        rooms = _dictfetchall(cur)
 
         for room in rooms:
             # Step 3 — check date overlap (each room = 1 DB span)
-            overlap = db.execute(
+            cur.execute(
                 """SELECT COUNT(*) AS cnt FROM reservations
-                   WHERE room_id = ? AND status != 'cancelled'
-                   AND check_in < ? AND check_out > ?""",
-                (room["id"], check_out, check_in)
-            ).fetchone()
+                   WHERE room_id = :1 AND status != 'cancelled'
+                   AND check_in < TO_DATE(:2, 'YYYY-MM-DD')
+                   AND check_out > TO_DATE(:3, 'YYYY-MM-DD')""",
+                [room["id"], check_out, check_in]
+            )
+            overlap = _dictfetchone(cur)
 
             if overlap["cnt"] == 0:
                 available.append({
@@ -150,12 +175,13 @@ async def search_rooms():
                     "room_id": room["id"],
                     "room_type": room["room_type"],
                     "capacity": room["capacity"],
-                    "price_per_night": room["price_per_night"],
-                    "total_price": round(room["price_per_night"] * nights, 2),
+                    "price_per_night": float(room["price_per_night"]),
+                    "total_price": round(float(room["price_per_night"]) * nights, 2),
                     "nights": nights,
                 })
 
-    db.close()
+    cur.close()
+    conn.close()
     return jsonify({"city": city, "check_in": check_in, "check_out": check_out,
                      "guests": guests, "results": available})
 
@@ -188,73 +214,79 @@ async def create_reservation():
         return jsonify({"error": "check_out must be after check_in"}), 400
 
     nights = (co - ci).days
-    db = get_db()
+    conn = get_db()
+    cur = conn.cursor()
 
     try:
-        # Acquire write lock to prevent double-booking
-        db.execute("BEGIN IMMEDIATE")
-
         # Step 1 — validate guest
-        guest = db.execute(
-            "SELECT * FROM guests WHERE id = ?", (guest_id,)
-        ).fetchone()
+        cur.execute("SELECT * FROM guests WHERE id = :1", [guest_id])
+        guest = _dictfetchone(cur)
         if not guest:
-            db.rollback()
-            db.close()
+            conn.rollback()
+            cur.close()
+            conn.close()
             return jsonify({"error": "guest not found"}), 404
 
         # Step 2 — validate room (JOIN with hotel for response)
-        room = db.execute(
+        cur.execute(
             """SELECT r.*, h.name AS hotel_name, h.city
                FROM rooms r JOIN hotels h ON r.hotel_id = h.id
-               WHERE r.id = ?""",
-            (room_id,)
-        ).fetchone()
+               WHERE r.id = :1""",
+            [room_id]
+        )
+        room = _dictfetchone(cur)
         if not room:
-            db.rollback()
-            db.close()
+            conn.rollback()
+            cur.close()
+            conn.close()
             return jsonify({"error": "room not found"}), 404
 
-        # Step 3 — check availability
-        overlap = db.execute(
+        # Step 3 — check availability (row-level: FOR UPDATE on room for serialization)
+        cur.execute(
             """SELECT COUNT(*) AS cnt FROM reservations
-               WHERE room_id = ? AND status != 'cancelled'
-               AND check_in < ? AND check_out > ?""",
-            (room_id, check_out, check_in)
-        ).fetchone()
+               WHERE room_id = :1 AND status != 'cancelled'
+               AND check_in < TO_DATE(:2, 'YYYY-MM-DD')
+               AND check_out > TO_DATE(:3, 'YYYY-MM-DD')""",
+            [room_id, check_out, check_in]
+        )
+        overlap = _dictfetchone(cur)
         if overlap["cnt"] > 0:
-            db.rollback()
-            db.close()
+            conn.rollback()
+            cur.close()
+            conn.close()
             return jsonify({"error": "room not available for these dates"}), 409
 
         # Step 4 — calculate price with loyalty discount
-        base_price = room["price_per_night"] * nights
+        base_price = float(room["price_per_night"]) * nights
         discount = LOYALTY_DISCOUNTS.get(guest["loyalty_tier"], 0)
         total_price = round(base_price * (1 - discount), 2)
 
-        # Step 5 — insert reservation
-        cursor = db.execute(
+        # Step 5 — insert reservation (RETURNING id for payment link)
+        reservation_id_var = cur.var(oracledb.NUMBER)
+        cur.execute(
             """INSERT INTO reservations
                (guest_id, room_id, check_in, check_out, total_price, status)
-               VALUES (?, ?, ?, ?, ?, 'confirmed')""",
-            (guest_id, room_id, check_in, check_out, total_price)
+               VALUES (:1, :2, TO_DATE(:3, 'YYYY-MM-DD'), TO_DATE(:4, 'YYYY-MM-DD'), :5, 'confirmed')
+               RETURNING id INTO :6""",
+            [guest_id, room_id, check_in, check_out, total_price, reservation_id_var]
         )
-        reservation_id = cursor.lastrowid
+        reservation_id = int(reservation_id_var.getvalue()[0])
 
         # Step 6 — process payment
-        db.execute(
+        cur.execute(
             """INSERT INTO payments
                (reservation_id, amount, method, status)
-               VALUES (?, ?, ?, 'completed')""",
-            (reservation_id, total_price, payment_method)
+               VALUES (:1, :2, :3, 'completed')""",
+            [reservation_id, total_price, payment_method]
         )
 
-        db.commit()
+        conn.commit()
     except Exception:
-        db.rollback()
+        conn.rollback()
         raise
     finally:
-        db.close()
+        cur.close()
+        conn.close()
 
     return jsonify({
         "reservation_id": reservation_id,
@@ -279,8 +311,9 @@ async def create_reservation():
 # ──────────────────────────────────────────────────────────────
 @app.route("/reservations/<int:reservation_id>")
 async def get_reservation(reservation_id):
-    db = get_db()
-    row = db.execute("""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
         SELECT r.id, r.check_in, r.check_out, r.total_price, r.status, r.created_at,
                g.name AS guest_name, g.email AS guest_email, g.loyalty_tier,
                rm.room_type, rm.price_per_night,
@@ -292,13 +325,21 @@ async def get_reservation(reservation_id):
         JOIN rooms   rm ON r.room_id  = rm.id
         JOIN hotels  h  ON rm.hotel_id = h.id
         LEFT JOIN payments p ON p.reservation_id = r.id
-        WHERE r.id = ?
-    """, (reservation_id,)).fetchone()
-    db.close()
+        WHERE r.id = :1
+    """, [reservation_id])
+    row = _dictfetchone(cur)
+    cur.close()
+    conn.close()
 
     if not row:
         return jsonify({"error": "reservation not found"}), 404
-    return jsonify(dict(row))
+
+    # Convert Oracle DATE/TIMESTAMP to strings for JSON
+    for key in ("check_in", "check_out", "created_at"):
+        if row.get(key) and hasattr(row[key], "isoformat"):
+            row[key] = row[key].isoformat()
+
+    return jsonify(row)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -306,28 +347,37 @@ async def get_reservation(reservation_id):
 # ──────────────────────────────────────────────────────────────
 @app.route("/guests/<int:guest_id>/reservations")
 async def guest_reservations(guest_id):
-    db = get_db()
-    guest = db.execute(
-        "SELECT * FROM guests WHERE id = ?", (guest_id,)
-    ).fetchone()
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM guests WHERE id = :1", [guest_id])
+    guest = _dictfetchone(cur)
     if not guest:
-        db.close()
+        cur.close()
+        conn.close()
         return jsonify({"error": "guest not found"}), 404
 
-    rows = db.execute("""
+    cur.execute("""
         SELECT r.id, r.check_in, r.check_out, r.total_price, r.status,
                rm.room_type, h.name AS hotel_name
         FROM reservations r
         JOIN rooms  rm ON r.room_id   = rm.id
         JOIN hotels h  ON rm.hotel_id = h.id
-        WHERE r.guest_id = ?
+        WHERE r.guest_id = :1
         ORDER BY r.check_in DESC
-    """, (guest_id,)).fetchall()
-    db.close()
+    """, [guest_id])
+    rows = _dictfetchall(cur)
+    cur.close()
+    conn.close()
+
+    # Convert Oracle DATE to strings
+    for row in rows:
+        for key in ("check_in", "check_out"):
+            if row.get(key) and hasattr(row[key], "isoformat"):
+                row[key] = row[key].isoformat()
 
     return jsonify({
-        "guest": dict(guest),
-        "reservations": [dict(r) for r in rows],
+        "guest": guest,
+        "reservations": rows,
     })
 
 
@@ -337,8 +387,9 @@ async def guest_reservations(guest_id):
 @app.route("/reports/occupancy")
 async def occupancy_report():
     await asyncio.sleep(1.5)
-    db = get_db()
-    rows = db.execute("""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
         SELECT h.name AS hotel, h.city,
                COUNT(r.id) AS total_bookings,
                SUM(CASE WHEN r.status = 'confirmed'   THEN 1 ELSE 0 END) AS active,
@@ -347,11 +398,13 @@ async def occupancy_report():
         FROM hotels h
         LEFT JOIN rooms        rm ON rm.hotel_id = h.id
         LEFT JOIN reservations r  ON r.room_id   = rm.id
-        GROUP BY h.id
+        GROUP BY h.name, h.city
         ORDER BY total_bookings DESC
-    """).fetchall()
-    db.close()
-    return jsonify([dict(r) for r in rows])
+    """)
+    rows = _dictfetchall(cur)
+    cur.close()
+    conn.close()
+    return jsonify(rows)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -359,8 +412,9 @@ async def occupancy_report():
 # ──────────────────────────────────────────────────────────────
 @app.route("/reports/revenue")
 async def revenue_report():
-    db = get_db()
-    rows = db.execute("""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("""
         SELECT h.name AS hotel, h.city,
                COUNT(p.id) AS total_payments,
                COALESCE(SUM(p.amount), 0)          AS total_revenue,
@@ -369,8 +423,10 @@ async def revenue_report():
         LEFT JOIN rooms        rm ON rm.hotel_id = h.id
         LEFT JOIN reservations r  ON r.room_id   = rm.id
         LEFT JOIN payments     p  ON p.reservation_id = r.id AND p.status = 'completed'
-        GROUP BY h.id
+        GROUP BY h.name, h.city
         ORDER BY total_revenue DESC
-    """).fetchall()
-    db.close()
-    return jsonify([dict(r) for r in rows])
+    """)
+    rows = _dictfetchall(cur)
+    cur.close()
+    conn.close()
+    return jsonify(rows)
