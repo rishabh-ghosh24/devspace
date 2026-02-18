@@ -92,7 +92,8 @@ cat <<EOF | sudo tee /opt/quart-demo/.env
 APM_ENDPOINT=https://<your-apm-domain-prefix>.apm-agt.<region>.oci.oraclecloud.com
 APM_DATA_KEY=<your-private-data-key>
 EOF
-sudo chmod 600 /opt/quart-demo/.env
+sudo chown opc:opc /opt/quart-demo/.env
+sudo chmod 640 /opt/quart-demo/.env
 ```
 
 > Get these values from **OCI Console → Observability & Management → APM → your domain → Data Keys**.
