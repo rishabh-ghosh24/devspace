@@ -141,8 +141,55 @@ hit "GET /rooms/search (missing city)" "400" \
     "$BASE/rooms/search?check_in=2025-07-01&check_out=2025-07-05"
 
 echo ""
+echo "── Burst traffic (generates many traces quickly) ──"
+
+for i in $(seq 1 5); do
+    hit "GET /hotels (burst $i)" "200" "$BASE/hotels" &
+done
+wait
+echo "  (5 parallel hotel list requests)"
+
+for i in $(seq 1 3); do
+    hit "GET /rooms/search London (burst $i)" "200" \
+        "$BASE/rooms/search?city=London&check_in=2025-12-0${i}&check_out=2025-12-0$((i+2))&guests=2" &
+done
+wait
+echo "  (3 parallel room searches — 30+ DB spans total)"
+
+echo ""
+echo "── Full booking workflow (search → book → verify) ──"
+
+echo "  Step 1: Search for rooms in Edinburgh..."
+SEARCH=$(curl -s "$BASE/rooms/search?city=Edinburgh&check_in=2025-12-01&check_out=2025-12-05&guests=2")
+echo -e "  ${GREEN}✓${NC} Search complete"
+
+echo "  Step 2: Book Highland Lodge Cabin..."
+BOOK2=$(curl -s -w "\n%{http_code}" -X POST "$BASE/reservations" \
+    -H "Content-Type: application/json" \
+    -d '{"guest_id":3,"room_id":10,"check_in":"2025-12-01","check_out":"2025-12-05","payment_method":"credit_card"}')
+BOOK2_CODE=$(echo "$BOOK2" | tail -1)
+echo -e "  ${GREEN}✓${NC} [$BOOK2_CODE] Booking submitted"
+
+echo "  Step 3: Look up the reservation..."
+hit "GET /reservations/7 (just booked)" "200" "$BASE/reservations/7"
+
+echo "  Step 4: Check guest history..."
+hit "GET /guests/3/reservations" "200" "$BASE/guests/3/reservations"
+
+echo "  Step 5: Check occupancy impact (slow)..."
+hit "GET /reports/occupancy" "200" "$BASE/reports/occupancy"
+
+echo "  Step 6: Check revenue impact..."
+hit "GET /reports/revenue" "200" "$BASE/reports/revenue"
+
+echo ""
 echo "============================================"
 echo " Done! Check OCI APM Trace Explorer now."
-echo " You should see ~25 traces with a mix of"
+echo " You should see ~40 traces with a mix of"
 echo " 200, 201, 400, 404, and 409 status codes."
+echo " Look for:"
+echo "   • /rooms/search — 10+ DB spans per trace"
+echo "   • /reservations POST — 6 DB spans (INSERT)"
+echo "   • /reports/occupancy — 1.5s latency spike"
+echo "   • Error traces with 400/404/409 codes"
 echo "============================================"
