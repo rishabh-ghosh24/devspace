@@ -32,7 +32,7 @@ export OTEL_PROPAGATORS="tracecontext,baggage"
 export OTEL_PYTHON_LOG_CORRELATION="true"
 
 # --- Launch ---
-exec opentelemetry-instrument \
-    hypercorn app:app \
+exec /home/opc/.local/bin/opentelemetry-instrument \
+    /home/opc/.local/bin/hypercorn app:app \
     --bind 0.0.0.0:8080 \
     --workers 2
