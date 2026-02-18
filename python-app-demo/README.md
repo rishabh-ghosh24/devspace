@@ -33,13 +33,22 @@ Both VMs → OTel OTLP/HTTP → OCI APM
 
 ```bash
 # Install and enable Apache
-sudo dnf install -y httpd
+sudo dnf install -y httpd git
 sudo systemctl enable --now httpd
 sudo firewall-cmd --permanent --add-service=http
 sudo firewall-cmd --reload
 
-# Deploy config (replace VM2_PRIVATE_IP inside the file first)
-sudo cp vm1-apache/quart-demo.conf /etc/httpd/conf.d/quart-demo.conf
+# Clone the repo and check out the demo branch
+git clone https://github.com/rishabh-ghosh24/devspace.git
+cd devspace
+git checkout python-app-demo
+
+# Edit the config to set VM2's private IP before copying
+vi python-app-demo/vm1-apache/quart-demo.conf
+# Replace VM2_PRIVATE_IP with the actual private IP of pyapp2, then save
+
+# Deploy config
+sudo cp python-app-demo/vm1-apache/quart-demo.conf /etc/httpd/conf.d/quart-demo.conf
 sudo systemctl reload httpd
 ```
 
@@ -47,17 +56,23 @@ sudo systemctl reload httpd
 
 ## VM2 — Quart App Setup
 
-### 1. Install system packages
+### 1. Install system packages and clone repo
 
 ```bash
-sudo dnf install -y python3.11 python3.11-pip sqlite
+sudo dnf install -y python3.11 python3.11-pip sqlite git
+
+# Clone the repo and check out the demo branch
+git clone https://github.com/rishabh-ghosh24/devspace.git
+cd devspace
+git checkout python-app-demo
 ```
 
 ### 2. Deploy app files
 
 ```bash
 sudo mkdir -p /opt/quart-demo
-sudo cp vm2-quart/{app.py,db.py,requirements.txt,start.sh} /opt/quart-demo/
+sudo cp python-app-demo/vm2-quart/{app.py,db.py,requirements.txt,start.sh} /opt/quart-demo/
+sudo cp python-app-demo/vm2-quart/quart-demo.service /etc/systemd/system/
 sudo chmod +x /opt/quart-demo/start.sh
 sudo chown -R opc:opc /opt/quart-demo
 ```
@@ -82,10 +97,9 @@ sudo chmod 600 /opt/quart-demo/.env
 
 > Get these values from **OCI Console → Observability & Management → APM → your domain → Data Keys**.
 
-### 5. Install and start the systemd service
+### 5. Enable and start the systemd service
 
 ```bash
-sudo cp vm2-quart/quart-demo.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now quart-demo
 sudo systemctl status quart-demo
