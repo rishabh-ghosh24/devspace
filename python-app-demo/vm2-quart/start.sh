@@ -1,24 +1,19 @@
 #!/bin/bash
 # ---------------------------------------------------------------------------
-# start.sh — Launch the Retail Quart app with OpenTelemetry auto-instrumentation
+# start.sh — Launch the StayEasy Hotel Booking app
 #
-# Fill in APM_ENDPOINT and APM_DATA_KEY before running, or supply them via
-# an EnvironmentFile when using the systemd service.
+# OTel tracing is initialised inside asgi.py / otel_setup.py.
+# APM_ENDPOINT and APM_DATA_KEY are read from the .env EnvironmentFile.
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
 
-# --- OCI APM connection ---
-# Format: https://<apm-domain-prefix>.apm-agt.{region}.oci.oraclecloud.com
-APM_ENDPOINT="${APM_ENDPOINT:?Set APM_ENDPOINT to your OCI APM data-upload endpoint}"
-APM_DATA_KEY="${APM_DATA_KEY:?Set APM_DATA_KEY to your OCI APM private data key}"
+# --- Validate APM connection vars (loaded from .env by systemd) ---
+export APM_ENDPOINT="${APM_ENDPOINT:?Set APM_ENDPOINT in /opt/quart-demo/.env}"
+export APM_DATA_KEY="${APM_DATA_KEY:?Set APM_DATA_KEY in /opt/quart-demo/.env}"
+export OTEL_SERVICE_NAME="stayeasy-hotel-app"
 
-# --- OCI APM connection (read by app.py directly) ---
-export APM_ENDPOINT="${APM_ENDPOINT:?Set APM_ENDPOINT in .env}"
-export APM_DATA_KEY="${APM_DATA_KEY:?Set APM_DATA_KEY in .env}"
-export OTEL_SERVICE_NAME="retail-quart-app"
-
-# --- Launch (OTel initialised inside app.py) ---
-exec /home/opc/.local/bin/hypercorn app:app \
+# --- Launch via asgi.py entry point (OTel wired there) ---
+exec /home/opc/.local/bin/hypercorn asgi:application \
     --bind 0.0.0.0:8080 \
     --workers 1

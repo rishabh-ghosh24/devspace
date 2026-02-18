@@ -1,5 +1,5 @@
 [Unit]
-Description=Retail Quart Demo App (OCI APM)
+Description=StayEasy Hotel Booking Demo (OCI APM)
 After=network.target
 
 [Service]
