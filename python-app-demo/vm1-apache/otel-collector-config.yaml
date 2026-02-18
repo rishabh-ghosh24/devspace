@@ -1,7 +1,15 @@
 # otel-collector-config.yaml — OTel Collector sidecar on pyapp1
 #
-# Receives gRPC from the Apache OTel module on localhost:4317
-# and exports via OTLP/HTTP to OCI APM.
+# Receives gRPC spans from the Apache OTel module on localhost:4317
+# and exports them via OTLP/HTTP to OCI APM.
+#
+# Replace these placeholders before deploying:
+#   <APM_DOMAIN>            → APM domain prefix (e.g., abcdef123456)
+#   <REGION>                → OCI region (e.g., eu-frankfurt-1)
+#   <YOUR_PRIVATE_DATA_KEY> → APM private data key
+#
+# Find these values:
+#   OCI Console → Observability & Management → APM → your domain → Data Keys
 #
 # Usage:
 #   otelcol --config /opt/otel-collector/otel-collector-config.yaml
@@ -19,9 +27,9 @@ processors:
 
 exporters:
   otlphttp:
-    endpoint: "https://<APM_DOMAIN>.apm-agt.<REGION>.oci.oraclecloud.com"
     headers:
       Authorization: "dataKey <YOUR_PRIVATE_DATA_KEY>"
+    # OCI APM uses a non-standard OTLP path — traces_endpoint overrides the default /v1/traces
     traces_endpoint: "https://<APM_DOMAIN>.apm-agt.<REGION>.oci.oraclecloud.com/20200101/opentelemetry/v1/traces"
 
 service:

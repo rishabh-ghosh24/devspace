@@ -101,25 +101,29 @@ sudo systemctl reload httpd
 This installs the OTel Apache module so Apache appears as `stayeasy-webserver` in APM and auto-injects `traceparent` headers.
 
 ```bash
-# Run the install script
+# Run the install script (downloads otel-webserver-module v1.1.0)
 sudo bash python-app-demo/vm1-apache/install-otel-apache.sh
 
-# Copy and edit the OTel config — set your APM endpoint
+# Copy the Apache OTel module config
 sudo cp python-app-demo/vm1-apache/opentelemetry_module.conf /etc/httpd/conf.d/
-# Edit the exporter endpoint (default: localhost:4317 for local OTel Collector)
 
 # Install OTel Collector (bridges gRPC from Apache module → OTLP/HTTP to APM)
-# Download the collector binary
 curl -fSL https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.96.0/otelcol_0.96.0_linux_amd64.tar.gz -o /tmp/otelcol.tar.gz
 sudo mkdir -p /opt/otel-collector
 sudo tar -xzf /tmp/otelcol.tar.gz -C /opt/otel-collector/
 
-# Copy and edit collector config — set APM_DOMAIN, REGION, DATA_KEY
+# Copy and edit collector config — replace 3 placeholders:
+#   <APM_DOMAIN>            → your APM domain prefix (e.g., abcdef123456)
+#   <REGION>                → OCI region (e.g., eu-frankfurt-1)
+#   <YOUR_PRIVATE_DATA_KEY> → APM private data key
 sudo cp python-app-demo/vm1-apache/otel-collector-config.yaml /opt/otel-collector/
 sudo vi /opt/otel-collector/otel-collector-config.yaml
 
-# Start collector (run in background or create a systemd service)
-sudo /opt/otel-collector/otelcol --config /opt/otel-collector/otel-collector-config.yaml &
+# Deploy and start the collector as a systemd service
+sudo cp python-app-demo/vm1-apache/otel-collector.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now otel-collector
+sudo journalctl -u otel-collector --no-pager -n 5
 
 # Restart Apache to load the OTel module
 sudo systemctl restart httpd
