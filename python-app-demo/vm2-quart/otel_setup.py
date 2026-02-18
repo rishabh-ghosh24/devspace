@@ -21,7 +21,7 @@ from opentelemetry.propagate import set_global_textmap
 from opentelemetry.propagators.composite import CompositePropagator
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
-from opentelemetry.instrumentation.dbapi import DatabaseApiIntegration
+from opentelemetry.instrumentation.dbapi import trace_integration
 
 log = logging.getLogger(__name__)
 
@@ -62,16 +62,10 @@ def init_otel(service_name: str = "stayeasy-hotel-app") -> None:
     # --- Auto-instrument oracledb (DB-API 2.0) ---
     # This patches oracledb.connect() so every cursor.execute() becomes
     # a span with db.system=oracle, db.statement=<SQL>, db.operation=SELECT/INSERT, etc.
-    DatabaseApiIntegration(
-        name="oracledb",
-        database_component="oracle",
-        database_type="oracle",
-        connection_attributes={
-            "database": "dsn",
-        },
-        tracer_provider=provider,
-    ).wrap_connect(
+    trace_integration(
         connect_module=oracledb,
         connect_method_name="connect",
+        database_system="oracle",
+        tracer_provider=provider,
     )
     log.info("oracledb DB-API instrumentation active")
