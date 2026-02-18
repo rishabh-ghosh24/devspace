@@ -1,8 +1,10 @@
 import asyncio
 from quart import Quart, jsonify
 from db import get_db, seed
+from opentelemetry.instrumentation.asgi import OpenTelemetryMiddleware
 
 app = Quart(__name__)
+app.asgi_app = OpenTelemetryMiddleware(app.asgi_app)
 
 
 @app.before_serving
