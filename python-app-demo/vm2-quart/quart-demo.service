@@ -1,0 +1,22 @@
+[Unit]
+Description=StayEasy Hotel Booking Demo (OCI APM)
+After=network.target
+
+[Service]
+User=opc
+WorkingDirectory=/opt/quart-demo
+
+# Store APM_ENDPOINT and APM_DATA_KEY in this file (one KEY=value per line)
+EnvironmentFile=/opt/quart-demo/.env
+
+ExecStart=/opt/quart-demo/start.sh
+Restart=on-failure
+RestartSec=5
+
+# Capture stdout/stderr in journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=quart-demo
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,32 @@
+# /etc/systemd/system/otel-collector.service
+# ---------------------------------------------------------------------------
+# OpenTelemetry Collector sidecar on pyapp1 (Apache VM).
+#
+# Receives gRPC spans from the Apache OTel module on localhost:4317
+# and exports them via OTLP/HTTP to OCI APM.
+#
+# Deploy:
+#   sudo cp python-app-demo/vm1-apache/otel-collector.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now otel-collector
+#
+# Logs:
+#   sudo journalctl -u otel-collector -f
+# ---------------------------------------------------------------------------
+
+[Unit]
+Description=OpenTelemetry Collector for StayEasy Apache (OCI APM)
+After=network.target
+Before=httpd.service
+
+[Service]
+User=root
+ExecStart=/opt/otel-collector/otelcol --config /opt/otel-collector/otel-collector-config.yaml
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=otel-collector
+
+[Install]
+WantedBy=multi-user.target
