@@ -76,47 +76,6 @@ class OCILogAnalyticsClient:
         """Set compartment ID."""
         self._compartment_id = value
 
-    def _is_tenancy_ocid(self, ocid: str) -> bool:
-        """Check if an OCID is a tenancy OCID."""
-        return ocid.startswith("ocid1.tenancy.")
-
-    async def _get_all_compartments(self) -> List[str]:
-        """Get ALL compartment OCIDs in the entire tenancy tree."""
-        tenancy_id = self._config.get("tenancy")
-        _debug(f"_get_all_compartments: tenancy_id={tenancy_id}")
-        compartments = []
-
-        try:
-            response = self._identity_client.list_compartments(
-                compartment_id=tenancy_id,
-                compartment_id_in_subtree=True,
-                lifecycle_state="ACTIVE",
-                access_level="ACCESSIBLE",
-            )
-            compartments = [c.id for c in response.data]
-            _debug(f"_get_all_compartments: first page returned {len(response.data)} compartments")
-
-            # Handle pagination
-            page_num = 1
-            while response.has_next_page:
-                page_num += 1
-                await self._rate_limiter.acquire()
-                response = self._identity_client.list_compartments(
-                    compartment_id=tenancy_id,
-                    compartment_id_in_subtree=True,
-                    lifecycle_state="ACTIVE",
-                    access_level="ACCESSIBLE",
-                    page=response.next_page,
-                )
-                compartments.extend([c.id for c in response.data])
-                _debug(f"_get_all_compartments: page {page_num} returned {len(response.data)} more")
-
-            _debug(f"_get_all_compartments: TOTAL {len(compartments)} compartments found")
-        except Exception as e:
-            _debug(f"_get_all_compartments: ERROR - {e}")
-
-        return compartments
-
     async def query(
         self,
         query_string: str,
@@ -147,16 +106,12 @@ class OCILogAnalyticsClient:
         _debug(f"=== QUERY START ===")
         _debug(f"compartment_id: {effective_compartment} (override: {compartment_id is not None})")
         _debug(f"include_subcompartments: {include_subcompartments}")
-        is_tenancy = self._is_tenancy_ocid(effective_compartment)
-        _debug(f"is_tenancy_ocid: {is_tenancy}")
 
-        if include_subcompartments and is_tenancy:
-            _debug("TAKING PATH: _query_all_compartments (tenancy + subcompartments)")
-            return await self._query_all_compartments(
-                query_string, time_start, time_end, max_results
-            )
-
-        _debug("TAKING PATH: _execute_single_query (single compartment)")
+        # Always use a single API call with compartment_id_in_subtree.
+        # The OCI Log Analytics Query API natively supports querying across
+        # sub-compartments (including at tenancy root level), just like the
+        # "Subcompartments" checkbox in the Log Explorer UI.
+        _debug("TAKING PATH: _execute_single_query")
         return await self._execute_single_query(
             query_string, time_start, time_end, max_results,
             effective_compartment, include_subcompartments
@@ -215,86 +170,6 @@ class OCILogAnalyticsClient:
                     compartment_id, include_subcompartments
                 )
             raise
-
-    async def _query_all_compartments(
-        self,
-        query_string: str,
-        time_start: str,
-        time_end: str,
-        max_results: Optional[int],
-    ) -> Dict[str, Any]:
-        """Query ALL compartments in the tenancy tree and aggregate results.
-
-        This is a workaround for OCI API behavior where compartment_id_in_subtree
-        is ignored when compartment_id is a tenancy OCID.
-        """
-        _debug("_query_all_compartments: STARTING")
-
-        compartments = await self._get_all_compartments()
-        _debug(f"_query_all_compartments: got {len(compartments)} compartments")
-
-        if not compartments:
-            _debug("_query_all_compartments: NO COMPARTMENTS - falling back to tenancy query")
-            return await self._execute_single_query(
-                query_string, time_start, time_end, max_results,
-                self._compartment_id, True
-            )
-
-        _debug(f"_query_all_compartments: will iterate through {len(compartments)} compartments")
-
-        all_columns = []
-        all_rows = []
-        total_count = 0
-        is_partial = False
-        successful_queries = 0
-        failed_queries = 0
-
-        for i, comp_id in enumerate(compartments):
-            try:
-                if (i + 1) % 10 == 0 or i == 0:
-                    logger.info(f"Querying compartment {i+1}/{len(compartments)}...")
-
-                result = await self._execute_single_query(
-                    query_string, time_start, time_end, max_results,
-                    comp_id, False
-                )
-
-                if not all_columns and result.get("columns"):
-                    all_columns = result["columns"]
-
-                all_rows.extend(result.get("rows", []))
-                total_count += result.get("total_count", 0)
-                successful_queries += 1
-
-                if result.get("is_partial", False):
-                    is_partial = True
-
-            except Exception as e:
-                failed_queries += 1
-                if failed_queries <= 5:
-                    logger.warning(f"Failed to query compartment {comp_id[:50]}: {e}")
-                elif failed_queries == 6:
-                    logger.warning("Suppressing further compartment query failure logs...")
-                continue
-
-        logger.info(
-            f"Cross-compartment query complete: "
-            f"{successful_queries}/{len(compartments)} compartments succeeded, "
-            f"{len(all_rows)} total rows, {total_count} total count"
-        )
-
-        if failed_queries > 0:
-            logger.warning(f"{failed_queries} compartments failed to query (may lack log data or access)")
-
-        return {
-            "columns": all_columns,
-            "rows": all_rows,
-            "total_count": total_count,
-            "is_partial": is_partial,
-            "_cross_compartment_query": True,
-            "_compartments_queried": successful_queries,
-            "_compartments_failed": failed_queries,
-        }
 
     def _parse_query_response(self, data: Any) -> Dict[str, Any]:
         """Parse query response into a structured dictionary."""
