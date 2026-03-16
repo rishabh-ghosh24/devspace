@@ -100,12 +100,35 @@ logger = logging.getLogger("audit-log-filter-trim")
 # Event filtering — decide whether to keep or drop an event
 # ---------------------------------------------------------------------------
 
+def _find_audit_data(event):
+    """Locate the actual audit data inside an event.
+
+    Service Connector may wrap audit events as:
+      - { "data": { "request": ..., "identity": ... } }   (common)
+      - { "request": ..., "identity": ... }                (direct)
+    """
+    if not isinstance(event, dict):
+        return None
+    # Wrapped under "data"
+    if "data" in event and isinstance(event["data"], dict):
+        if "request" in event["data"] or "identity" in event["data"]:
+            return event["data"]
+    # Direct audit data
+    if "request" in event or "identity" in event:
+        return event
+    return None
+
+
 def _extract_http_method(event):
     """Extract the HTTP method from an audit event.
 
     OCI audit events store the method in request.action (e.g. "GET", "POST").
+    Handles both direct and "data"-wrapped event structures.
     """
-    request = event.get("request") if isinstance(event, dict) else None
+    audit = _find_audit_data(event)
+    if audit is None:
+        return None
+    request = audit.get("request")
     if not isinstance(request, dict):
         return None
     action = request.get("action")
@@ -127,16 +150,13 @@ def _should_keep_event(event):
 # Payload trimming — strip verbose fields to reduce size
 # ---------------------------------------------------------------------------
 
-def trim_event(event):
-    """Strip unnecessary fields from an audit event to reduce payload size."""
-    if not isinstance(event, dict):
-        return event
-
-    # Keep only whitelisted top-level fields
+def _trim_audit_data(audit):
+    """Strip unnecessary fields from audit data to reduce payload size."""
+    # Keep only whitelisted fields
     trimmed = {}
     for key in KEEP_TOP_LEVEL:
-        if key in event:
-            trimmed[key] = event[key]
+        if key in audit:
+            trimmed[key] = audit[key]
 
     # Strip bulky sub-fields from request
     if "request" in trimmed and isinstance(trimmed["request"], dict):
@@ -160,6 +180,30 @@ def trim_event(event):
         }
 
     return trimmed
+
+
+def trim_event(event):
+    """Strip unnecessary fields from an audit event.
+
+    Handles both direct audit data and "data"-wrapped events from
+    Service Connector Hub.
+    """
+    if not isinstance(event, dict):
+        return event
+
+    # Wrapped under "data" — trim the inner audit data, preserve wrapper
+    if "data" in event and isinstance(event["data"], dict):
+        inner = event["data"]
+        if "request" in inner or "identity" in inner:
+            result = {k: v for k, v in event.items() if k != "data"}
+            result["data"] = _trim_audit_data(inner)
+            return result
+
+    # Direct audit data
+    if "request" in event or "identity" in event:
+        return _trim_audit_data(event)
+
+    return event
 
 
 # ---------------------------------------------------------------------------
