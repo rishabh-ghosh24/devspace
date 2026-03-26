@@ -2,6 +2,12 @@
 
 Extends [Part 1 (audit-log-masking)](../audit-log-masking/) with event filtering and payload trimming to reduce audit log volume and size before shipping to an external SIEM.
 
+## Why Part 2?
+
+Part 1 handles credential masking only — it keeps all events and all fields intact. This works well for tenancies with moderate audit volume.
+
+Part 2 was built for a customer with **~1.6 million audit events/day** being sent to an external SIEM via OCI Streaming. At ~16,000 characters per event (due to verbose headers, state diffs, and metadata), this created significant SIEM ingestion costs and noise. OCI Service Connector Hub does not support content-based filtering natively — you cannot filter by HTTP method or strip fields at the connector level. The only option is a function task in the pipeline.
+
 ## Problem
 
 A typical OCI tenancy generates ~1.6 million audit events/day. Most are GET (read) requests that add noise for SIEM analysis. Each event is ~16,000 characters, largely due to verbose headers and state diffs. This function solves both issues.
@@ -83,8 +89,10 @@ audit-log-masking-part-2/
 
 **1. Deploy the function**
 
-- Deploy the Function as per guidelines in OCI under 'Getting started'
-- Replace the default `func.py` with the one from this repo and run `fn deploy`
+- Create the function boilerplate: `fn init --runtime python <function-name>`
+- This generates `func.py`, `func.yaml`, and `requirements.txt` (with `fdk` dependency)
+- Replace the default `func.py` with the one from this repo
+- Run `fn deploy --app <your-app-name>`
 
 **2. Create the Service Connector**
 
@@ -99,11 +107,17 @@ audit-log-masking-part-2/
 **3. Verify**
 
 ```bash
-python3 verify_filtering.py --stream-id <stream-ocid> --limit 10
+# Read recent messages (last 5 minutes) — recommended:
+python3 verify_filtering.py --stream-id <stream-ocid> --limit 20 --since 5
 
 # With full JSON output:
-python3 verify_filtering.py --stream-id <stream-ocid> --limit 10 --raw
+python3 verify_filtering.py --stream-id <stream-ocid> --limit 20 --since 5 --raw
+
+# Read from oldest (may include stale data from before deployment):
+python3 verify_filtering.py --stream-id <stream-ocid> --limit 10
 ```
+
+> **Note:** Always use `--since N` (minutes) to read recent messages. Without it, the script reads from the oldest available message, which may include stale data from before the function was deployed.
 
 The script checks:
 - No GET events present (filtering works)
@@ -122,8 +136,8 @@ Edit `ALLOWED_METHODS` in `func.py`:
 # Default: only keep write operations
 ALLOWED_METHODS = frozenset({"POST", "DELETE", "PUT", "PATCH"})
 
-# Example: also keep PATCH separately (already included by default)
-ALLOWED_METHODS = frozenset({"POST", "DELETE", "PUT", "PATCH"})
+# Example: also keep GET requests (pass everything through, only trim + mask)
+ALLOWED_METHODS = frozenset({"GET", "POST", "DELETE", "PUT", "PATCH"})
 ```
 
 ### Keep additional fields

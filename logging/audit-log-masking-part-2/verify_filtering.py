@@ -211,23 +211,34 @@ def main():
     print(f"\nConnecting to stream: {args.stream_id}")
     print(f"Reading up to {args.limit} messages...\n")
 
+    signer = None
     try:
         config = oci.config.from_file(profile_name=args.profile)
     except Exception:
         print("OCI config not found, trying instance principal...")
-        signer = oci.auth.signers.get_resource_principals_signer()
+        try:
+            signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+        except Exception:
+            print("Instance principal failed, trying resource principal...")
+            signer = oci.auth.signers.get_resource_principals_signer()
         config = {}
-        stream_client = oci.streaming.StreamClient(
-            config={}, signer=signer, service_endpoint=""
-        )
 
-    sc_admin = oci.streaming.StreamAdminClient(config)
+    if signer:
+        sc_admin = oci.streaming.StreamAdminClient(config, signer=signer)
+    else:
+        sc_admin = oci.streaming.StreamAdminClient(config)
+
     stream = sc_admin.get_stream(args.stream_id).data
     endpoint = stream.messages_endpoint
     print(f"Stream endpoint: {endpoint}")
 
-    stream_client = oci.streaming.StreamClient(config, service_endpoint=endpoint)
+    if signer:
+        stream_client = oci.streaming.StreamClient(config, signer=signer, service_endpoint=endpoint)
+    else:
+        stream_client = oci.streaming.StreamClient(config, service_endpoint=endpoint)
 
+    # Note: reads partition 0 only. For multi-partition streams, most audit
+    # events land on partition 0; this is sufficient for verification.
     if args.since:
         start_time = datetime.now(timezone.utc) - timedelta(minutes=args.since)
         print(f"Reading messages since: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")

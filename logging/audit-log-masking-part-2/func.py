@@ -92,6 +92,9 @@ SECRET_VALUE_PATTERNS = [
 
 REDACTION_PLACEHOLDER = "[REDACTED]"
 
+# Pre-computed lowercase set for fast key lookups during masking
+REDACT_KEYS_LOWER = frozenset(k.lower() for k in REDACT_KEYS)
+
 logging.getLogger().setLevel(logging.INFO)
 logger = logging.getLogger("audit-log-filter-trim")
 
@@ -223,7 +226,7 @@ def _mask_list(parent_key, items: list) -> list:
     result = []
     for item in items:
         if isinstance(item, str):
-            if parent_key and parent_key.lower() in {k.lower() for k in REDACT_KEYS}:
+            if parent_key and parent_key.lower() in REDACT_KEYS_LOWER:
                 result.append(REDACTION_PLACEHOLDER)
             elif _should_redact_value(item):
                 result.append(REDACTION_PLACEHOLDER)
@@ -243,7 +246,7 @@ def mask_sensitive_fields(data):
         masked = {}
         for key, value in data.items():
             if isinstance(value, str):
-                if key.lower() in {k.lower() for k in REDACT_KEYS}:
+                if key.lower() in REDACT_KEYS_LOWER:
                     masked[key] = REDACTION_PLACEHOLDER
                 elif _should_redact_value(value):
                     masked[key] = REDACTION_PLACEHOLDER
