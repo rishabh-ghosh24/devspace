@@ -11,6 +11,8 @@ Reads messages from an OCI Streaming topic and validates that:
 Usage:
   python3 verify_filtering.py --stream-id <stream-ocid>
   python3 verify_filtering.py --stream-id <stream-ocid> --limit 10 --raw
+  python3 verify_filtering.py --stream-id <stream-ocid> --since 5     # last 5 minutes
+  python3 verify_filtering.py --stream-id <stream-ocid> --since 30 --raw
 
 Prerequisites:
   - OCI CLI configured (~/.oci/config) or running in Cloud Shell
@@ -25,6 +27,7 @@ import argparse
 import base64
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 
 try:
     import oci
@@ -198,6 +201,10 @@ def main():
         "--raw", action="store_true",
         help="Also print the full decoded JSON for each message"
     )
+    parser.add_argument(
+        "--since", type=int, default=None,
+        help="Read messages from N minutes ago (default: reads from oldest)"
+    )
     args = parser.parse_args()
 
     # --- Connect to OCI Streaming ---
@@ -221,12 +228,23 @@ def main():
 
     stream_client = oci.streaming.StreamClient(config, service_endpoint=endpoint)
 
-    cursor_response = stream_client.create_cursor(
-        args.stream_id,
-        oci.streaming.models.CreateCursorDetails(
+    if args.since:
+        start_time = datetime.now(timezone.utc) - timedelta(minutes=args.since)
+        print(f"Reading messages since: {start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        cursor_details = oci.streaming.models.CreateCursorDetails(
+            partition="0",
+            type="AT_TIME",
+            time=start_time
+        )
+    else:
+        print("Reading from oldest messages (use --since N for recent messages)")
+        cursor_details = oci.streaming.models.CreateCursorDetails(
             partition="0",
             type="TRIM_HORIZON"
         )
+
+    cursor_response = stream_client.create_cursor(
+        args.stream_id, cursor_details
     )
     cursor = cursor_response.data.value
 
@@ -246,6 +264,9 @@ def main():
 
     # --- Validate each message ---
     all_passed = True
+    empty_count = 0
+    content_count = 0
+
     for i, msg in enumerate(messages, 1):
         try:
             decoded = base64.b64decode(msg.value).decode("utf-8")
@@ -259,12 +280,26 @@ def main():
             print(f"\n--- Raw JSON (Message {i}) ---")
             print(json.dumps(event, indent=2)[:3000])
 
+        audit_data = find_audit_data(event)
+        if audit_data is None:
+            empty_count += 1
+        else:
+            content_count += 1
+
         if not validate_event(event, i):
             all_passed = False
 
     # --- Summary ---
     print(f"\n{'=' * 60}")
-    if all_passed:
+    print(f"  Total: {len(messages)} messages read")
+    print(f"  With content: {content_count}  |  Empty/filtered: {empty_count}")
+    print()
+
+    if content_count == 0 and empty_count > 0:
+        print("  WARNING: All messages were empty ({}).")
+        print("  This likely means you're reading OLD messages from before")
+        print("  the fix was deployed. Try: --since 5  (last 5 minutes)")
+    elif all_passed:
         print("  ALL MESSAGES VALIDATED — filtering + trimming + masking OK")
     else:
         print("  SOME CHECKS FAILED — review output above")
