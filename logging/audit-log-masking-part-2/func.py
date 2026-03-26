@@ -106,9 +106,14 @@ logger = logging.getLogger("audit-log-filter-trim")
 def _find_audit_data(event):
     """Locate the actual audit data inside an event.
 
-    Service Connector may wrap audit events as:
+    Service Connector sends audit events wrapped as:
       - { "data": { "request": ..., "identity": ... } }   (common)
       - { "request": ..., "identity": ... }                (direct)
+
+    NOTE: The verify_filtering.py script has a more permissive version of
+    this function that also handles logContent wrappers (seen when reading
+    from OCI Streaming). This function only needs to handle what Service
+    Connector Hub sends to the function task.
     """
     if not isinstance(event, dict):
         return None

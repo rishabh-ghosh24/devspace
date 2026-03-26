@@ -70,7 +70,12 @@ EXPECT_PRESERVED = [
 
 
 def find_audit_data(event):
-    """Auto-detect where the audit data lives in the event."""
+    """Auto-detect where the audit data lives in the event.
+
+    More permissive than func.py's _find_audit_data — also handles
+    logContent wrappers seen when reading from OCI Streaming, which
+    may re-wrap events differently than what SC sends to the function.
+    """
     if isinstance(event, dict):
         if "data" in event and isinstance(event["data"], dict):
             if "identity" in event["data"]:
