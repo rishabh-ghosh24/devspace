@@ -394,6 +394,7 @@ class TestComputeCompartmentStats:
         ]
         stats = compute_compartment_stats(instances, sla_target=99.95)
         assert stats["compartment_availability_pct"] is None
+        assert stats["at_target_count"] is None
         assert stats["data_complete"] is False
 
 
@@ -420,6 +421,15 @@ class TestGetHeatmapResolution:
 
 
 class TestComputeFleetStats:
+    def test_fleet_uses_discovered_instance_count(self):
+        instances = [
+            {"up_hours": 168, "down_hours": 0, "monitored_hours": 168,
+             "availability_pct": 100.0, "data_complete": True},
+        ]
+        fleet = compute_fleet_stats(instances, sla_target=99.95)
+        assert fleet["discovered_instance_count"] == 1
+        assert "total_instances" not in fleet  # renamed field
+
     def test_fleet_aggregation(self):
         instances = [
             {"up_hours": 168, "down_hours": 0, "monitored_hours": 168,
@@ -428,12 +438,12 @@ class TestComputeFleetStats:
              "availability_pct": 99.40, "data_complete": True},
         ]
         fleet = compute_fleet_stats(instances, sla_target=99.95)
-        assert fleet["total_instances"] == 2
+        assert fleet["discovered_instance_count"] == 2
         assert fleet["total_up_hours"] == 335
         assert fleet["total_monitored_hours"] == 336
-        # 335/336 = 99.70
         assert fleet["fleet_availability_pct"] == 99.70
-        assert fleet["at_target_count"] == 1  # only first meets 99.95
+        assert fleet["at_target_count"] == 1
+        assert fleet["report_complete"] is True
 
     def test_fleet_all_na(self):
         instances = [
@@ -453,7 +463,27 @@ class TestComputeFleetStats:
         ]
         fleet = compute_fleet_stats(instances, sla_target=99.95)
         assert fleet["fleet_availability_pct"] is None
+        assert fleet["at_target_count"] is None
+        assert fleet["total_up_hours"] is None
+        assert fleet["total_monitored_hours"] is None
         assert fleet["data_complete"] is False
+        assert fleet["report_complete"] is False
+        # discovered_instance_count stays numeric for diagnostics
+        assert fleet["discovered_instance_count"] == 2
+
+    def test_fleet_discovery_warning_forces_na(self):
+        """Discovery warning alone forces fleet rollups to N/A"""
+        instances = [
+            {"up_hours": 168, "down_hours": 0, "monitored_hours": 168,
+             "availability_pct": 100.0, "data_complete": True},
+        ]
+        fleet = compute_fleet_stats(instances, sla_target=99.95,
+                                     discovery_warnings=["Could not list instances in staging"])
+        assert fleet["fleet_availability_pct"] is None
+        assert fleet["at_target_count"] is None
+        assert fleet["discovery_complete"] is False
+        assert fleet["report_complete"] is False
+        assert fleet["discovered_instance_count"] == 1
 ```
 
 - [ ] **Step 6: Run tests to verify they fail**
@@ -508,41 +538,61 @@ def compute_instance_stats(hourly_statuses):
     }
 
 
-def compute_fleet_stats(instance_stats_list, sla_target):
+def compute_fleet_stats(instance_stats_list, sla_target, discovery_warnings=None):
     """Compute fleet-level availability from per-instance stats.
 
-    If ANY instance has data_complete=False (nodata hours), the fleet
-    availability is set to None (N/A) to fail closed.
+    Fail-closed rules:
+    - Any instance with data_complete=False → data_complete=False
+    - Any discovery_warnings → discovery_complete=False
+    - report_complete = data_complete AND discovery_complete
+    - If report_complete=False: fleet_availability_pct, at_target_count,
+      total_up_hours, total_monitored_hours all become None
+    - discovered_instance_count always stays numeric for diagnostics
 
     Args:
         instance_stats_list: list of dicts from compute_instance_stats
         sla_target: SLA target percentage (e.g. 99.95)
+        discovery_warnings: list of warning strings from discovery phase
 
     Returns:
-        dict with total_instances, fleet_availability_pct, at_target_count,
-        total_up_hours, total_monitored_hours, data_complete
+        dict with discovered_instance_count, fleet_availability_pct,
+        at_target_count, total_up_hours, total_monitored_hours,
+        data_complete, discovery_complete, report_complete
     """
+    discovery_warnings = discovery_warnings or []
     total_up = sum(s["up_hours"] for s in instance_stats_list)
     total_monitored = sum(s["monitored_hours"] for s in instance_stats_list)
-    all_complete = all(s.get("data_complete", True) for s in instance_stats_list)
+    data_complete = all(s.get("data_complete", True) for s in instance_stats_list)
+    discovery_complete = len(discovery_warnings) == 0
+    report_complete = data_complete and discovery_complete
 
-    if not all_complete or total_monitored == 0:
-        fleet_pct = None
-    else:
-        fleet_pct = round(total_up / total_monitored * 100, 2)
+    if not report_complete or total_monitored == 0:
+        return {
+            "discovered_instance_count": len(instance_stats_list),
+            "fleet_availability_pct": None,
+            "at_target_count": None,
+            "total_up_hours": None,
+            "total_monitored_hours": None,
+            "data_complete": data_complete,
+            "discovery_complete": discovery_complete,
+            "report_complete": report_complete,
+        }
 
+    fleet_pct = round(total_up / total_monitored * 100, 2)
     at_target = sum(
         1 for s in instance_stats_list
         if s["availability_pct"] is not None and s["availability_pct"] >= sla_target
     )
 
     return {
-        "total_instances": len(instance_stats_list),
+        "discovered_instance_count": len(instance_stats_list),
         "fleet_availability_pct": fleet_pct,
         "at_target_count": at_target,
         "total_up_hours": total_up,
         "total_monitored_hours": total_monitored,
-        "data_complete": all_complete,
+        "data_complete": data_complete,
+        "discovery_complete": discovery_complete,
+        "report_complete": report_complete,
     }
 ```
 
@@ -555,7 +605,7 @@ def compute_compartment_stats(instances_in_compartment, sla_target):
     """Compute availability stats for a single compartment.
 
     If ANY instance in the compartment has data_complete=False (nodata hours),
-    the compartment availability is set to None (N/A) to fail closed.
+    compartment_availability_pct and at_target_count both become None (fail closed).
 
     Args:
         instances_in_compartment: list of instance dicts with stats
@@ -569,10 +619,14 @@ def compute_compartment_stats(instances_in_compartment, sla_target):
     all_complete = all(s.get("data_complete", True) for s in instances_in_compartment)
 
     if not all_complete or total_monitored == 0:
-        pct = None
-    else:
-        pct = round(total_up / total_monitored * 100, 2)
+        return {
+            "instance_count": len(instances_in_compartment),
+            "compartment_availability_pct": None,
+            "at_target_count": None,
+            "data_complete": all_complete,
+        }
 
+    pct = round(total_up / total_monitored * 100, 2)
     at_target = sum(
         1 for s in instances_in_compartment
         if s["availability_pct"] is not None and s["availability_pct"] >= sla_target
@@ -716,11 +770,46 @@ class TestGroupInstances:
     def test_duplicate_names_different_ocids(self):
         """Two compartments named 'prod' in different branches must not merge"""
         instances = [
-            {"name": "vm1", "compartment_id": "ocid1.comp.branchA", "compartment_name": "prod", "availability_pct": 100.0},
-            {"name": "vm2", "compartment_id": "ocid1.comp.branchB", "compartment_name": "prod", "availability_pct": 99.0},
+            {"name": "vm1", "compartment_id": "ocid1.comp.branchA",
+             "compartment_name": "prod", "compartment_label": "teamA/prod",
+             "availability_pct": 100.0},
+            {"name": "vm2", "compartment_id": "ocid1.comp.branchB",
+             "compartment_name": "prod", "compartment_label": "teamB/prod",
+             "availability_pct": 99.0},
         ]
         groups = group_instances_by_compartment(instances)
         assert len(groups) == 2  # NOT merged into one
+        labels = [g["name"] for g in groups.values()]
+        assert "teamA/prod" in labels
+        assert "teamB/prod" in labels
+
+
+class TestBuildCompartmentLabels:
+    def test_unique_names_use_name_as_label(self):
+        from compute_availability_report import build_compartment_labels
+        cmap = {
+            "root": {"name": "tenancy", "parent_id": None},
+            "c1": {"name": "prod", "parent_id": "root"},
+            "c2": {"name": "staging", "parent_id": "root"},
+        }
+        build_compartment_labels(cmap)
+        assert cmap["c1"]["label"] == "prod"
+        assert cmap["c2"]["label"] == "staging"
+
+    def test_duplicate_names_get_parent_prefix(self):
+        from compute_availability_report import build_compartment_labels
+        cmap = {
+            "root": {"name": "tenancy", "parent_id": None},
+            "teamA": {"name": "teamA", "parent_id": "root"},
+            "teamB": {"name": "teamB", "parent_id": "root"},
+            "c1": {"name": "prod", "parent_id": "teamA"},
+            "c2": {"name": "prod", "parent_id": "teamB"},
+        }
+        build_compartment_labels(cmap)
+        assert cmap["c1"]["label"] == "teamA/prod"
+        assert cmap["c2"]["label"] == "teamB/prod"
+        # Non-duplicated names stay simple
+        assert cmap["teamA"]["label"] == "teamA"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -751,7 +840,8 @@ def discover_compartments(identity_client, compartment_id):
     root = identity_client.get_compartment(compartment_id).data
     root_name = root.name
 
-    compartment_map = {compartment_id: root_name}
+    # compartment_map stores {ocid: {"name": str, "parent_id": str}}
+    compartment_map = {compartment_id: {"name": root_name, "parent_id": None}}
 
     # List all sub-compartments recursively
     try:
@@ -763,13 +853,36 @@ def discover_compartments(identity_client, compartment_id):
             lifecycle_state="ACTIVE",
         ).data
         for c in sub_compartments:
-            compartment_map[c.id] = c.name
+            compartment_map[c.id] = {"name": c.name, "parent_id": c.compartment_id}
     except oci.exceptions.ServiceError as e:
         msg = f"Could not list sub-compartments: {e.message}"
         log.warning(msg)
         discovery_warnings.append(msg)
 
+    # Build display labels, disambiguating duplicate names
+    build_compartment_labels(compartment_map)
+
     return root_name, compartment_map, discovery_warnings
+
+
+def build_compartment_labels(compartment_map):
+    """Add a 'label' key to each compartment entry.
+
+    If a compartment name is unique, label = name.
+    If duplicate names exist, label = parent/name path for those duplicates.
+    """
+    # Detect duplicate names
+    name_counts = {}
+    for info in compartment_map.values():
+        name_counts[info["name"]] = name_counts.get(info["name"], 0) + 1
+
+    for comp_id, info in compartment_map.items():
+        if name_counts[info["name"]] > 1 and info["parent_id"]:
+            parent = compartment_map.get(info["parent_id"])
+            parent_name = parent["name"] if parent else "unknown"
+            info["label"] = f"{parent_name}/{info['name']}"
+        else:
+            info["label"] = info["name"]
 
 
 def discover_instances(compute_client, compartment_map, running_only=False):
@@ -791,7 +904,9 @@ def discover_instances(compute_client, compartment_map, running_only=False):
     instances = []
     discovery_warnings = []
 
-    for comp_id, comp_name in compartment_map.items():
+    for comp_id, comp_info in compartment_map.items():
+        comp_name = comp_info["name"]
+        comp_label = comp_info.get("label", comp_name)
         try:
             comp_instances = oci.pagination.list_call_get_all_results(
                 compute_client.list_instances,
@@ -821,6 +936,7 @@ def discover_instances(compute_client, compartment_map, running_only=False):
                 "region": inst.region,
                 "compartment_id": inst.compartment_id,
                 "compartment_name": comp_name,
+                "compartment_label": comp_label,
             })
 
     log.info(f"Discovered {len(instances)} instances across {len(compartment_map)} compartments")
@@ -842,9 +958,9 @@ def group_instances_by_compartment(instances):
     groups = {}
     for inst in instances:
         comp_id = inst.get("compartment_id", inst.get("compartment_name"))
-        comp_name = inst.get("compartment_name", comp_id)
+        comp_label = inst.get("compartment_label", inst.get("compartment_name", comp_id))
         if comp_id not in groups:
-            groups[comp_id] = {"name": comp_name, "instances": []}
+            groups[comp_id] = {"name": comp_label, "instances": []}
         groups[comp_id]["instances"].append(inst)
 
     # Sort instances within each group: worst availability first
@@ -1172,6 +1288,28 @@ class TestBuildAvailabilityMatrix:
         )
         assert matrix["inst1"]["h0"] == "stopped"
         assert matrix["inst1"]["h1"] == "stopped"
+
+    def test_failed_instance_ids_produce_nodata(self):
+        """Only instances in failed_instance_ids get nodata, others unaffected"""
+        hourly_buckets = ["h0", "h1"]
+        cpu_metrics = {
+            "inst2": {"h0": 5.0, "h1": 10.0},
+        }
+        status_metrics = {
+            "inst2": {"h0": 0, "h1": 0},
+        }
+        matrix = build_availability_matrix(
+            [{"id": "inst1", "compartment_id": "comp1"},
+             {"id": "inst2", "compartment_id": "comp1"}],
+            hourly_buckets, cpu_metrics, status_metrics,
+            failed_instance_ids={"inst1"},
+        )
+        # inst1 failed → all nodata
+        assert matrix["inst1"]["h0"] == "nodata"
+        assert matrix["inst1"]["h1"] == "nodata"
+        # inst2 succeeded → normal classification
+        assert matrix["inst2"]["h0"] == "up"
+        assert matrix["inst2"]["h1"] == "up"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1285,11 +1423,14 @@ def sample_report_data():
         },
     ]
     fleet = {
-        "total_instances": 2,
+        "discovered_instance_count": 2,
         "fleet_availability_pct": 99.70,
         "at_target_count": 1,
         "total_up_hours": 335,
         "total_monitored_hours": 336,
+        "data_complete": True,
+        "discovery_complete": True,
+        "report_complete": True,
     }
     heatmap_data = {
         "ocid1.instance.oc1.aaa1": ["up"] * 168,
@@ -1370,11 +1511,19 @@ class TestHTMLReport:
         html = generate_html_report(**sample_report_data)
         assert "data-warning" not in html
 
-    def test_warning_banner_when_incomplete(self, sample_report_data):
-        fleet = {**sample_report_data["fleet"], "data_complete": False}
+    def test_warning_banner_when_data_incomplete(self, sample_report_data):
+        fleet = {**sample_report_data["fleet"], "data_complete": False, "report_complete": False}
         html = generate_html_report(**{**sample_report_data, "fleet": fleet})
         assert "data-warning" in html
         assert "Incomplete data" in html
+
+    def test_warning_banner_when_discovery_incomplete(self, sample_report_data):
+        """discovery_warnings alone triggers banner even if metric data is complete"""
+        html = generate_html_report(
+            **sample_report_data,
+            discovery_warnings=["Could not list instances in staging"],
+        )
+        assert "data-warning" in html
 
     def test_heatmap_toggle_hidden_under_50(self, sample_report_data):
         """No toggle button when under 50 instances"""
@@ -1474,7 +1623,7 @@ The function builds the HTML string section by section. Each section below must 
 - `<div class="header">` with h1 "Compute availability report"
 - Meta bar: Compartment, Region, Period (start — end, N days), SLA target
 - If `title` or `logo_data`: right-aligned branding area
-- **If `data_complete` is False on fleet stats OR there are discovery_warnings**:
+- **If `report_complete` is False on fleet stats OR there are discovery_warnings**:
   show a visible amber warning banner below the header:
   `<div class="data-warning">` with amber background (#FAEEDA), border (#EF9F27),
   icon, and text: "Incomplete data: some metrics or compartments could not be queried.
@@ -1484,11 +1633,10 @@ The function builds the HTML string section by section. Each section below must 
 
 **Section C: METRIC CARDS**
 - 4 cards in `.metrics` grid:
-  1. Fleet availability — value colored green/amber/red based on sla_target
-  2. Instances monitored — neutral
-  3. Meeting SLA target — `at_target / total` green
-  4. Total uptime hours — `up / monitored` neutral
-- Handle fleet_availability_pct = None → display "N/A"
+  1. Fleet availability — numeric only when `report_complete=True`, else "N/A"; colored green/amber/red based on sla_target
+  2. Instances monitored — always show `discovered_instance_count`; append "(partial scope)" if `discovery_complete=False`
+  3. Meeting SLA target — numeric only when `report_complete=True`, else "N/A"
+  4. Total uptime hours — numeric only when `report_complete=True`, else "N/A"
 
 **Section D: EXECUTIVE SUMMARY (donut + table)**
 - Donut: `<canvas id="donut">` + center text overlay
@@ -1751,7 +1899,7 @@ def main():
         stats = compute_instance_stats(matrix[inst["id"]])
         inst.update(stats)
 
-    fleet = compute_fleet_stats(instances, args.sla_target)
+    fleet = compute_fleet_stats(instances, args.sla_target, discovery_warnings=disc_warnings)
 
     # Build heatmap data (list of statuses per instance)
     heatmap_data = {}
