@@ -82,7 +82,7 @@ class TestParseArgs:
         assert args.profile == "DEFAULT"
         assert args.days == 7
         assert args.sla_target == 99.95
-        assert args.include_stopped is False
+        assert args.running_only is False
         assert args.upload is False
         assert args.bucket == "availability-reports"
         assert args.par_expiry_days == 30
@@ -101,7 +101,7 @@ class TestParseArgs:
             "--profile", "PROD",
             "--days", "30",
             "--sla-target", "99.99",
-            "--include-stopped",
+            "--running-only",
             "--region", "us-ashburn-1",
             "--title", "ACME Corp",
             "--logo", "/path/to/logo.png",
@@ -115,7 +115,7 @@ class TestParseArgs:
         assert args.profile == "PROD"
         assert args.days == 30
         assert args.sla_target == 99.99
-        assert args.include_stopped is True
+        assert args.running_only is True
         assert args.region == "us-ashburn-1"
         assert args.title == "ACME Corp"
         assert args.logo == "/path/to/logo.png"
@@ -181,8 +181,8 @@ def parse_args(argv=None):
                         default=7, help="Reporting period in days (default: 7)")
     parser.add_argument("--sla-target", type=float, default=99.95,
                         help="SLA target %% (default: 99.95)")
-    parser.add_argument("--include-stopped", action="store_true",
-                        help="Include non-RUNNING instances")
+    parser.add_argument("--running-only", action="store_true",
+                        help="Only include RUNNING instances (default: all non-TERMINATED)")
     parser.add_argument("--region", help="OCI region override")
     parser.add_argument("--compartment-name", help="Compartment display name override")
 
@@ -211,7 +211,7 @@ if __name__ == "__main__":
 cd sla-report && python -m pytest tests/test_availability.py::TestParseArgs -v
 ```
 
-Expected: All 4 tests PASS.
+Expected: All 5 tests PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -258,6 +258,12 @@ class TestClassifyHour:
 
     def test_no_cpu_and_no_status(self):
         assert classify_hour(has_cpu=False, instance_status=None) == "stopped"
+
+    def test_query_failure(self):
+        assert classify_hour(has_cpu=False, instance_status=None, query_failed=True) == "nodata"
+
+    def test_query_failure_overrides_data(self):
+        assert classify_hour(has_cpu=True, instance_status=0, query_failed=True) == "nodata"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -273,16 +279,19 @@ Expected: FAIL — `classify_hour` not found.
 Add to `compute_availability_report.py`:
 
 ```python
-def classify_hour(has_cpu, instance_status):
-    """Classify an hourly bucket as up, down, or stopped.
+def classify_hour(has_cpu, instance_status, query_failed=False):
+    """Classify an hourly bucket as up, down, stopped, or nodata.
 
     Args:
         has_cpu: True if CpuUtilization data exists for this hour
         instance_status: 0 (healthy), 1 (unhealthy), or None (no data)
+        query_failed: True if the Monitoring API call failed for this scope
 
     Returns:
-        "up", "down", or "stopped"
+        "up", "down", "stopped", or "nodata"
     """
+    if query_failed:
+        return "nodata"
     if has_cpu:
         if instance_status == 1:
             return "down"
@@ -341,6 +350,13 @@ class TestComputeInstanceStats:
         hourly = {"h0": "up", "h1": "down", "h2": "down"}
         stats = compute_instance_stats(hourly)
         assert stats["downtime_minutes"] == 120
+
+    def test_nodata_causes_na(self):
+        hourly = {"h0": "up", "h1": "nodata", "h2": "up"}
+        stats = compute_instance_stats(hourly)
+        assert stats["nodata_hours"] == 1
+        assert stats["availability_pct"] is None
+        assert stats["data_complete"] is False
 
     def test_mixed_up_down_stopped(self):
         hourly = {f"h{i}": "up" for i in range(5)}
@@ -439,10 +455,15 @@ def compute_instance_stats(hourly_statuses):
     up = sum(1 for v in hourly_statuses.values() if v == "up")
     down = sum(1 for v in hourly_statuses.values() if v == "down")
     stopped = sum(1 for v in hourly_statuses.values() if v == "stopped")
+    nodata = sum(1 for v in hourly_statuses.values() if v == "nodata")
     monitored = up + down
     total = len(hourly_statuses)
+    data_complete = nodata == 0
 
-    if monitored == 0:
+    if nodata > 0:
+        # Any nodata hours → availability is unreliable, show N/A
+        availability_pct = None
+    elif monitored == 0:
         availability_pct = None
     else:
         availability_pct = round(up / monitored * 100, 2)
@@ -451,10 +472,12 @@ def compute_instance_stats(hourly_statuses):
         "up_hours": up,
         "down_hours": down,
         "stopped_hours": stopped,
+        "nodata_hours": nodata,
         "monitored_hours": monitored,
         "total_hours": total,
         "availability_pct": availability_pct,
         "downtime_minutes": down * 60,
+        "data_complete": data_complete,
     }
 
 
@@ -595,9 +618,13 @@ def setup_auth(args):
 
 
 def make_client(client_class, config, signer):
-    """Create an OCI SDK client with appropriate auth."""
+    """Create an OCI SDK client with appropriate auth.
+
+    For signer-based auth, pass the config dict (which contains region)
+    so --region override is respected.
+    """
     if signer:
-        return client_class(config={}, signer=signer)
+        return client_class(config=config, signer=signer)
     return client_class(config)
 ```
 
@@ -693,47 +720,52 @@ def discover_compartments(identity_client, compartment_id):
     return root_name, compartment_map
 
 
-def discover_instances(compute_client, compartment_id, compartment_map, include_stopped=False):
-    """Discover VM instances across compartment tree using a single API call.
+def discover_instances(compute_client, compartment_map, running_only=False):
+    """Discover VM instances across compartment tree.
 
-    Uses compartment_id_in_subtree=True to get all instances in one paginated call,
-    matching how the OCI Console works. Do NOT iterate compartments individually.
+    Note: Compute.ListInstances does NOT support compartment_id_in_subtree.
+    We must iterate each compartment individually. This is correct behavior
+    for the Compute API (unlike Monitoring/Log Analytics which do support subtree).
+
+    Args:
+        compute_client: OCI ComputeClient
+        compartment_map: {compartment_ocid: display_name} from discover_compartments
+        running_only: if True, only include RUNNING instances
 
     Returns:
         list of instance dicts with metadata
     """
     instances = []
 
-    try:
-        all_instances = oci.pagination.list_call_get_all_results(
-            compute_client.list_instances,
-            compartment_id,
-            compartment_id_in_subtree=True,
-        ).data
-    except oci.exceptions.ServiceError as e:
-        log.error(f"Could not list instances: {e.message}")
-        return instances
-
-    for inst in all_instances:
-        # Skip terminated always
-        if inst.lifecycle_state == "TERMINATED":
-            continue
-        # Skip non-running unless --include-stopped
-        if not include_stopped and inst.lifecycle_state != "RUNNING":
+    for comp_id, comp_name in compartment_map.items():
+        try:
+            comp_instances = oci.pagination.list_call_get_all_results(
+                compute_client.list_instances,
+                comp_id,
+            ).data
+        except oci.exceptions.ServiceError as e:
+            log.warning(f"Could not list instances in {comp_name}: {e.message}")
             continue
 
-        instances.append({
-            "id": inst.id,
-            "name": inst.display_name,
-            "state": inst.lifecycle_state,
-            "shape": inst.shape,
-            "ad": inst.availability_domain,
-            "fd": inst.fault_domain,
-            "region": inst.region,
-            "compartment_id": inst.compartment_id,
-            "compartment_name": compartment_map.get(inst.compartment_id, "Unknown"),
-            "created": str(inst.time_created.date()) if inst.time_created else "N/A",
-        })
+        for inst in comp_instances:
+            # Skip terminated always
+            if inst.lifecycle_state == "TERMINATED":
+                continue
+            # Skip non-running if --running-only
+            if running_only and inst.lifecycle_state != "RUNNING":
+                continue
+
+            instances.append({
+                "id": inst.id,
+                "name": inst.display_name,
+                "state": inst.lifecycle_state,
+                "shape": inst.shape,
+                "ad": inst.availability_domain,
+                "fd": inst.fault_domain,
+                "region": inst.region,
+                "compartment_id": inst.compartment_id,
+                "compartment_name": comp_name,
+            })
 
     log.info(f"Discovered {len(instances)} instances across {len(compartment_map)} compartments")
     return instances
@@ -878,8 +910,13 @@ def calculate_batch_groups(instance_ids, hours):
     return batches
 
 
+def is_tenancy_ocid(ocid):
+    """Check if an OCID is a tenancy root OCID."""
+    return ocid.startswith("ocid1.tenancy.")
+
+
 def collect_metrics(monitoring_client, compartment_id, namespace, metric_name,
-                    start_time, end_time, instance_ids=None):
+                    start_time, end_time, use_subtree=False, instance_ids=None):
     """Query SummarizeMetricsData for a metric across instances.
 
     Args:
@@ -889,10 +926,13 @@ def collect_metrics(monitoring_client, compartment_id, namespace, metric_name,
         metric_name: metric name (e.g. "CpuUtilization")
         start_time: datetime, start of reporting window
         end_time: datetime, end of reporting window
+        use_subtree: only set True when compartment_id is tenancy root OCID
         instance_ids: optional list of instance OCIDs to filter by
 
     Returns:
-        dict of {instance_ocid: {hour_key: value}} where value is the max metric value
+        (metrics_dict, failed) tuple:
+        - metrics_dict: {instance_ocid: {hour_key: value}}
+        - failed: bool, True if the API call failed
     """
     if instance_ids:
         resource_filter = " || ".join(
@@ -912,20 +952,17 @@ def collect_metrics(monitoring_client, compartment_id, namespace, metric_name,
                 end_time=end_time.isoformat(),
                 resolution="1h",
             ),
-            compartment_id_in_subtree=True,
+            compartment_id_in_subtree=use_subtree,
         ).data
     except oci.exceptions.ServiceError as e:
-        log.warning(f"Metric query failed for {namespace}/{metric_name}: {e.message}")
-        return {}
+        log.warning(f"Metric query failed for {namespace}/{metric_name} "
+                    f"in {compartment_id}: {e.message}")
+        return {}, True  # Return failure flag
 
     # Parse results: group data points by resourceId
     metrics_by_instance = {}
     for metric_data in result:
-        resource_id = None
-        for dim in (metric_data.dimensions or {}):
-            if dim == "resourceId":
-                resource_id = metric_data.dimensions[dim]
-                break
+        resource_id = metric_data.dimensions.get("resourceId") if metric_data.dimensions else None
         if not resource_id:
             continue
 
@@ -936,44 +973,77 @@ def collect_metrics(monitoring_client, compartment_id, namespace, metric_name,
             hour_key = dp.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
             metrics_by_instance[resource_id][hour_key] = dp.value
 
-    return metrics_by_instance
+    return metrics_by_instance, False
 
 
-def collect_all_metrics(monitoring_client, compartment_id, instances, start_time, end_time):
-    """Collect CpuUtilization and instance_status for all instances, with batching.
+def collect_all_metrics(monitoring_client, root_compartment_id, compartment_map,
+                        instances, start_time, end_time):
+    """Collect CpuUtilization and instance_status for all instances.
+
+    Query strategy:
+    - If root_compartment_id is tenancy OCID: single query with subtree=True
+    - Otherwise: per-compartment queries with subtree=False
 
     Returns:
-        (cpu_metrics, status_metrics) — both are dicts of {instance_ocid: {hour_key: value}}
+        (cpu_metrics, status_metrics, failed_compartments) where:
+        - cpu_metrics: {instance_ocid: {hour_key: value}}
+        - status_metrics: {instance_ocid: {hour_key: value}}
+        - failed_compartments: set of compartment OCIDs where queries failed
     """
-    instance_ids = [inst["id"] for inst in instances]
     hours = int((end_time - start_time).total_seconds() / 3600)
-    batches = calculate_batch_groups(instance_ids, hours)
-
     cpu_metrics = {}
     status_metrics = {}
+    failed_compartments = set()
 
-    for batch in batches:
-        log.info(f"Querying metrics for batch of {len(batch)} instances...")
+    use_subtree = is_tenancy_ocid(root_compartment_id)
 
-        # CpuUtilization
-        batch_cpu = collect_metrics(
-            monitoring_client, compartment_id,
-            "oci_computeagent", "CpuUtilization",
-            start_time, end_time,
-            instance_ids=batch if len(batches) > 1 else None,
-        )
-        cpu_metrics.update(batch_cpu)
+    if use_subtree:
+        # Tenancy-wide: single query with subtree
+        scopes = [(root_compartment_id, True)]
+    else:
+        # Non-root: per-compartment queries
+        scopes = [(comp_id, False) for comp_id in compartment_map.keys()]
 
-        # instance_status
-        batch_status = collect_metrics(
-            monitoring_client, compartment_id,
-            "oci_compute_infrastructure_health", "instance_status",
-            start_time, end_time,
-            instance_ids=batch if len(batches) > 1 else None,
-        )
-        status_metrics.update(batch_status)
+    for comp_id, subtree in scopes:
+        # Determine instances in this scope for batching
+        if subtree:
+            scope_instance_ids = [inst["id"] for inst in instances]
+        else:
+            scope_instance_ids = [inst["id"] for inst in instances
+                                  if inst["compartment_id"] == comp_id]
+        if not scope_instance_ids:
+            continue
 
-    return cpu_metrics, status_metrics
+        batches = calculate_batch_groups(scope_instance_ids, hours)
+
+        for batch in batches:
+            log.info(f"Querying metrics for batch of {len(batch)} instances "
+                     f"in {comp_id[:30]}...")
+
+            # CpuUtilization
+            batch_cpu, cpu_failed = collect_metrics(
+                monitoring_client, comp_id,
+                "oci_computeagent", "CpuUtilization",
+                start_time, end_time,
+                use_subtree=subtree,
+                instance_ids=batch if len(batches) > 1 else None,
+            )
+            cpu_metrics.update(batch_cpu)
+
+            # instance_status
+            batch_status, status_failed = collect_metrics(
+                monitoring_client, comp_id,
+                "oci_compute_infrastructure_health", "instance_status",
+                start_time, end_time,
+                use_subtree=subtree,
+                instance_ids=batch if len(batches) > 1 else None,
+            )
+            status_metrics.update(batch_status)
+
+            if cpu_failed or status_failed:
+                failed_compartments.add(comp_id)
+
+    return cpu_metrics, status_metrics, failed_compartments
 ```
 
 - [ ] **Step 4: Run all tests**
@@ -1050,30 +1120,36 @@ cd sla-report && python -m pytest tests/test_availability.py::TestBuildAvailabil
 Add to `compute_availability_report.py`:
 
 ```python
-def build_availability_matrix(instance_ids, hourly_buckets, cpu_metrics, status_metrics):
+def build_availability_matrix(instances, hourly_buckets, cpu_metrics, status_metrics,
+                               failed_compartments=None):
     """Build availability matrix from metric data.
 
     Args:
-        instance_ids: list of instance OCIDs
+        instances: list of instance dicts (need id and compartment_id)
         hourly_buckets: list of hour keys (ISO format strings)
         cpu_metrics: {instance_id: {hour_key: value}} from CpuUtilization
         status_metrics: {instance_id: {hour_key: value}} from instance_status
+        failed_compartments: set of compartment OCIDs where queries failed
 
     Returns:
-        {instance_id: {hour_key: "up"|"down"|"stopped"}}
+        {instance_id: {hour_key: "up"|"down"|"stopped"|"nodata"}}
     """
+    failed_compartments = failed_compartments or set()
     matrix = {}
-    for inst_id in instance_ids:
+    for inst in instances:
+        inst_id = inst["id"] if isinstance(inst, dict) else inst
+        comp_id = inst.get("compartment_id") if isinstance(inst, dict) else None
+        query_failed = comp_id in failed_compartments if comp_id else False
+
         inst_cpu = cpu_metrics.get(inst_id, {})
         inst_status = status_metrics.get(inst_id, {})
         hourly = {}
         for hour in hourly_buckets:
             has_cpu = hour in inst_cpu
             status_val = inst_status.get(hour)
-            # instance_status value: 0=healthy, 1=unhealthy, None=no data
             if status_val is not None:
                 status_val = int(status_val)
-            hourly[hour] = classify_hour(has_cpu, status_val)
+            hourly[hour] = classify_hour(has_cpu, status_val, query_failed=query_failed)
         matrix[inst_id] = hourly
     return matrix
 ```
@@ -1354,7 +1430,12 @@ The function builds the HTML string section by section. Each section below must 
   - For each instance row:
     - Name (200px), availability % (52px, colored), colored blocks
     - Use `get_heatmap_resolution(days)` to determine block grouping
-    - Aggregate hourly statuses into blocks: if ANY hour in block is "down" → block is down, if ALL are "stopped" → stopped, else up
+    - Aggregate hourly statuses into blocks:
+      - if ANY hour is "nodata" → block is nodata
+      - if ANY hour is "down" → block is down
+      - if ALL hours are "stopped" → block is stopped
+      - if mix of up + stopped → block is up (instance was available when running; stopped hours don't indicate unavailability)
+      - else → up
   - **HEAT-9 toggle**: If total instances > 50, only render rows where availability < sla_target. Add a button with id="show-all-toggle" that toggles visibility of hidden rows via JS.
 - Legend: Available (green), Unavailable (red), No data/stopped (gray), resolution note
 
@@ -1553,7 +1634,7 @@ def main():
     else:
         _, compartment_map = discover_compartments(identity_client, args.compartment_id)
 
-    instances = discover_instances(compute_client, args.compartment_id, compartment_map, args.include_stopped)
+    instances = discover_instances(compute_client, compartment_map, args.running_only)
     if not instances:
         log.error("No instances found. Exiting.")
         sys.exit(1)
@@ -1566,14 +1647,20 @@ def main():
     log.info("Collecting metrics for %d instances over %d days (%d hours)...",
              len(instances), args.days, len(hourly_buckets))
     monitoring_client = make_client(oci.monitoring.MonitoringClient, config, signer)
-    cpu_metrics, status_metrics = collect_all_metrics(
-        monitoring_client, args.compartment_id, instances, start_time, end_time
+    cpu_metrics, status_metrics, failed_compartments = collect_all_metrics(
+        monitoring_client, args.compartment_id, compartment_map,
+        instances, start_time, end_time,
     )
+
+    if failed_compartments:
+        log.warning(f"Metric queries failed for {len(failed_compartments)} compartment(s). "
+                    "Affected instances will show N/A availability.")
 
     # Phase 4: Compute availability
     log.info("Computing availability...")
-    instance_ids = [inst["id"] for inst in instances]
-    matrix = build_availability_matrix(instance_ids, hourly_buckets, cpu_metrics, status_metrics)
+    matrix = build_availability_matrix(
+        instances, hourly_buckets, cpu_metrics, status_metrics, failed_compartments
+    )
 
     # Merge stats into instance dicts
     for inst in instances:
@@ -1684,6 +1771,7 @@ resource "oci_identity_dynamic_group" "availability_reporter" {
 
 `sla-report/iam/policies.tf`:
 ```hcl
+variable "tenancy_ocid" {}
 variable "compartment_name" {}
 variable "bucket_name" { default = "availability-reports" }
 
@@ -1785,9 +1873,13 @@ python3 compute_availability_report.py \
 
 Verify: branding appears in top-right of report.
 
-- [ ] **Step 5: Compare with OCI Console**
+- [ ] **Step 5: Compare with OCI Console (both metrics)**
 
-Open OCI Console → Monitoring → Metrics Explorer. Query `CpuUtilization[1h].max()` for a specific instance. Compare reported availability % with the script's output. Should match within ±0.1%.
+Open OCI Console → Monitoring → Metrics Explorer. For a specific instance, query BOTH:
+1. `CpuUtilization[1h].max()` from `oci_computeagent`
+2. `instance_status[1h].max()` from `oci_compute_infrastructure_health`
+
+Verify the report's hourly classification matches the combined signal from both metrics. Do NOT validate against CpuUtilization alone — the whole design depends on the two-metric approach.
 
 - [ ] **Step 6: Print to PDF**
 

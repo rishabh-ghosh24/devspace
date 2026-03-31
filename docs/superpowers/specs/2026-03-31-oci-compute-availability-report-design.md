@@ -106,14 +106,15 @@ A single-file Python CLI tool distributed as a standalone GitHub repository. It:
 
 ## 5. Availability classification
 
-For each hourly bucket, classify the instance's status using both metrics:
+For each hourly bucket, classify the instance's status using both metrics. There are four possible states: `up`, `down`, `stopped`, and `nodata`.
 
 ```
-if CpuUtilization data exists:
-    if instance_status == 1:        → DOWN   (running but infra degraded)
-    else:                           → UP     (healthy)
-elif instance_status == 0:          → UP     (infra healthy, agent issue)
-elif instance_status == 1:          → DOWN   (infra issue, no CPU data)
+if query_failed_for_this_scope:     → NODATA  (incomplete data, triggers N/A)
+elif CpuUtilization data exists:
+    if instance_status == 1:        → DOWN    (running but infra degraded)
+    else:                           → UP      (healthy)
+elif instance_status == 0:          → UP      (infra healthy, agent issue)
+elif instance_status == 1:          → DOWN    (infra issue, no CPU data)
 else (no data from either metric):  → STOPPED (exclude from denominator)
 ```
 
@@ -127,6 +128,7 @@ else (no data from either metric):  → STOPPED (exclude from denominator)
 | No data | 0 (healthy) | **UP** | Infra healthy, agent disabled/issue |
 | No data | 1 (unhealthy) | **DOWN** | Infra issue confirmed |
 | No data | no data | **STOPPED** | Excluded from denominator |
+| Query failure | — | **NODATA** | Data incomplete, cannot compute availability |
 
 ### Availability formula
 
@@ -137,6 +139,7 @@ fleet-level:   availability % = sum(all_up_hours) / sum(all_up_hours + all_down_
 ```
 
 - STOPPED hours are excluded from both numerator and denominator
+- **NODATA**: if ANY hour for an instance is `nodata`, that instance's availability = `N/A`. If any instance in a compartment/fleet has `nodata`, that scope's availability = `N/A` and an "Incomplete data" warning is shown in the report
 - Division by zero (all hours STOPPED) → display as "N/A"
 - Availability rounded to 2 decimal places
 
@@ -158,11 +161,11 @@ fleet-level:   availability % = sum(all_up_hours) / sum(all_up_hours + all_down_
 | ID | Requirement |
 |----|-------------|
 | DISC-1 | Accept compartment OCID via `--compartment-id` (required). Can be tenancy root OCID. |
-| DISC-2 | Always scan sub-compartments recursively (`compartment_id_in_subtree=True`) |
+| DISC-2 | Discover sub-compartments recursively via Identity API (`ListCompartments` with `compartment_id_in_subtree=True`), then call `Compute.ListInstances` once per discovered compartment. Note: `ListInstances` does NOT support `compartment_id_in_subtree` — compartment iteration is required here. |
 | DISC-3 | Auto-detect compartment display name via Identity API; allow override with `--compartment-name` |
 | DISC-4 | List all VM compute instances using Compute `ListInstances` API |
 | DISC-5 | Exclude TERMINATED instances always |
-| DISC-6 | By default, include only RUNNING instances (checked at query time). `--include-stopped` flag includes STOPPED and other lifecycle states. Note: an instance that was RUNNING during the reporting period but is now STOPPED will be excluded unless `--include-stopped` is set. |
+| DISC-6 | By default, include all non-TERMINATED instances (RUNNING, STOPPED, etc.) to ensure SLA reports capture instances that may have had downtime during the reporting window but are now stopped. `--running-only` flag restricts to RUNNING instances only (for operational views, not SLA reports). |
 | DISC-7 | Collect per-instance metadata: display name, OCID, lifecycle state, shape, availability domain, fault domain, region, compartment name |
 | DISC-8 | Group instances by compartment for report output |
 
@@ -175,22 +178,22 @@ fleet-level:   availability % = sum(all_up_hours) / sum(all_up_hours + all_down_
 | DATA-3 | Use 1-hour resolution with `max()` statistic for both metrics |
 | DATA-4 | Query window: current time minus `--days` (default 7, allowed: 7, 14, 30, 60, 90) |
 | DATA-5 | Maximum lookback: 90 days (OCI Monitoring hourly retention limit) |
-| DATA-6 | Query all instances in a single API call per metric (no resourceId filter), using compartment subtree scanning |
+| DATA-6 | **Query strategy depends on compartment scope**: if `--compartment-id` is a tenancy root OCID, use a single `SummarizeMetricsData` call with `compartment_id_in_subtree=True`. If it is a non-root compartment, issue per-compartment Monitoring queries with `compartment_id_in_subtree=False`. The SDK only supports the subtree flag when compartmentId is the tenancy OCID. |
 | DATA-7 | Match returned metric streams to instances by `resourceId` dimension client-side |
 | DATA-8 | **API batching**: if expected data points (instances × hours) exceeds 80,000, split into batched queries by instance groups to stay under the 100,000 data point per-call API limit |
-| DATA-9 | Handle API errors gracefully — log warning, mark affected hours as "nodata" |
+| DATA-9 | Handle API errors gracefully — log warning, mark affected hours as **`nodata`** (distinct from `stopped`). Track which compartments/instances had query failures. `nodata` hours must NOT be silently excluded from the denominator — they cause the affected instance's availability to display as `N/A` and trigger an "Incomplete data" warning in the report. |
 
 ### 6.4 Availability computation
 
 | ID | Requirement |
 |----|-------------|
 | COMP-1 | Divide the reporting period into 1-hour buckets |
-| COMP-2 | For each instance, for each hourly bucket: classify as UP, DOWN, or STOPPED per the classification truth table |
+| COMP-2 | For each instance, for each hourly bucket: classify as UP, DOWN, STOPPED, or NODATA per the classification truth table |
 | COMP-3 | Per-instance availability % = `up_hours / (up_hours + down_hours) × 100`, rounded to 2 decimal places |
 | COMP-4 | STOPPED hours excluded from both numerator and denominator |
 | COMP-5 | Per-compartment availability % = weighted average across instances in compartment |
 | COMP-6 | Fleet availability % = `sum(all_up_hours) / sum(all_up_hours + all_down_hours) × 100` |
-| COMP-7 | Track per-instance: total hours, up hours, down hours, stopped hours, monitored hours (up+down), availability %, downtime minutes |
+| COMP-7 | Track per-instance: total hours, up hours, down hours, stopped hours, nodata hours, monitored hours (up+down), availability % (N/A if nodata_hours > 0), downtime minutes, data_complete boolean |
 | COMP-8 | Track per-compartment: instance count, compartment availability %, instances meeting SLA target |
 | COMP-9 | Track fleet-level: total instances, fleet availability %, count meeting SLA target, total up hours, total monitored hours |
 | COMP-10 | SLA target configurable via `--sla-target` (default: 99.95) |
@@ -243,7 +246,7 @@ Self-contained HTML file. All CSS inline. Chart.js embedded inline (no CDN). Hea
 |         | - 30 days: 6-hour blocks (120 blocks) |
 |         | - 60 days: daily blocks (60 blocks) |
 |         | - 90 days: daily blocks (90 blocks) |
-| HEAT-5 | Block colors: green (#1D9E75) = available, red (#E24B4A) = unavailable, light gray (#E8E6DF) = no data/stopped |
+| HEAT-5 | Block colors: green (#1D9E75) = available, red (#E24B4A) = unavailable, light gray (#E8E6DF) = stopped, amber/hatched (#EF9F27) = nodata (query failure). Tooltip text must distinguish stopped from nodata even if visual treatment is similar. |
 | HEAT-6 | Hover tooltip: `{instance_name} — {date} {hour}:00 UTC — {status_label}` |
 | HEAT-7 | Date markers above the heatmap |
 | HEAT-8 | Legend below: Available, Unavailable, No data/stopped, block resolution note |
@@ -293,7 +296,7 @@ Authentication:
 Reporting:
   --days {7,14,30,60,90}        Reporting period (default: 7)
   --sla-target FLOAT            SLA target % (default: 99.95)
-  --include-stopped             Include non-RUNNING instances
+  --running-only                Only include RUNNING instances (default: all non-TERMINATED)
   --region REGION               OCI region override (default: from auth provider)
 
 Branding:
@@ -446,9 +449,9 @@ When expected data points exceed 80,000 (safety margin), the script must batch i
 |-------|-----|-------------|
 | Discover | `Identity.GetCompartment` | 1 call |
 | Discover | `Identity.ListCompartments` (subtree) | 1 call |
-| Discover | `Compute.ListInstances` | 1 call per compartment (paginated) |
-| Collect | `Monitoring.SummarizeMetricsData` (CpuUtilization) | 1-N calls (batched if needed) |
-| Collect | `Monitoring.SummarizeMetricsData` (instance_status) | 1-N calls (batched if needed) |
+| Discover | `Compute.ListInstances` | 1 call per discovered compartment (paginated). Note: `ListInstances` does NOT support `compartment_id_in_subtree`. |
+| Collect | `Monitoring.SummarizeMetricsData` (CpuUtilization) | Tenancy root: 1-N calls with subtree=True. Non-root: 1-N calls per compartment with subtree=False. Batched within each scope if needed. |
+| Collect | `Monitoring.SummarizeMetricsData` (instance_status) | Same pattern as CpuUtilization. |
 | Upload | `ObjectStorage.CreateBucket` | 1 call (if needed) |
 | Upload | `ObjectStorage.PutObject` | 1 call |
 | Upload | `ObjectStorage.CreatePreauthenticatedRequest` | 1 call |
@@ -485,9 +488,12 @@ oci-compute-availability-report/
 | `test_classify_down_no_cpu_status_unhealthy` | No CpuUtilization + instance_status=1 → DOWN |
 | `test_classify_up_no_cpu_status_healthy` | No CpuUtilization + instance_status=0 → UP |
 | `test_classify_stopped_no_data` | No data from either metric → STOPPED |
+| `test_classify_nodata_on_query_failure` | Query failure → NODATA |
 | `test_availability_all_up` | All hours UP → 100% |
 | `test_availability_with_downtime` | Mix of UP and DOWN → correct percentage |
 | `test_availability_all_stopped` | All hours STOPPED → N/A |
+| `test_availability_with_nodata` | Any NODATA hour → instance availability = N/A |
+| `test_fleet_with_nodata_instance` | Instance with NODATA → fleet availability = N/A + warning |
 | `test_availability_stopped_excluded` | STOPPED hours excluded from denominator |
 | `test_fleet_aggregation` | Multiple instances → weighted fleet average |
 | `test_compartment_grouping` | Instances grouped correctly by compartment |
@@ -504,7 +510,11 @@ oci-compute-availability-report/
 | `test_query_cpu_metrics` | Query CpuUtilization for known running instances |
 | `test_query_instance_status` | Query instance_status for known running instances |
 | `test_html_generation` | Generate report and validate HTML structure |
+| `test_non_root_compartment_run` | Non-root compartment uses per-compartment Monitoring queries (no subtree flag) |
+| `test_tenancy_root_run` | Tenancy root OCID uses subtree Monitoring queries |
+| `test_stopped_instances_included` | STOPPED instances appear in report by default |
 | `test_object_storage_upload` | Upload report and verify PAR URL is accessible |
+| `test_validate_combined_metrics` | Compare report against both CpuUtilization AND instance_status, not CpuUtilization alone |
 
 ---
 
