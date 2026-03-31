@@ -110,6 +110,7 @@ class TestParseArgs:
             "--bucket", "my-bucket",
             "--os-namespace", "myns",
             "--par-expiry-days", "90",
+            "--compartment-name", "My Compartment",
         ])
         assert args.auth == "config"
         assert args.profile == "PROD"
@@ -134,8 +135,6 @@ class TestParseArgs:
         ])
         assert args.compartment_name == "Custom Name"
 ```
-
-Note: Update `test_all_flags` parse_args call to include `"--compartment-name", "My Compartment"` in the args list.
 
 - [ ] **Step 3: Run tests to verify they fail**
 
@@ -309,7 +308,7 @@ def classify_hour(has_cpu, instance_status, query_failed=False):
 cd sla-report && python -m pytest tests/test_availability.py::TestClassifyHour -v
 ```
 
-Expected: All 6 tests PASS.
+Expected: All 8 tests PASS.
 
 - [ ] **Step 5: Write computation tests**
 
@@ -375,14 +374,27 @@ class TestComputeCompartmentStats:
         from compute_availability_report import compute_compartment_stats
         instances = [
             {"compartment_name": "prod", "up_hours": 168, "down_hours": 0,
-             "monitored_hours": 168, "availability_pct": 100.0},
+             "monitored_hours": 168, "availability_pct": 100.0, "data_complete": True},
             {"compartment_name": "prod", "up_hours": 167, "down_hours": 1,
-             "monitored_hours": 168, "availability_pct": 99.40},
+             "monitored_hours": 168, "availability_pct": 99.40, "data_complete": True},
         ]
         stats = compute_compartment_stats(instances, sla_target=99.95)
         assert stats["instance_count"] == 2
         assert stats["compartment_availability_pct"] == 99.70  # 335/336
         assert stats["at_target_count"] == 1
+        assert stats["data_complete"] is True
+
+    def test_compartment_incomplete_forces_na(self):
+        from compute_availability_report import compute_compartment_stats
+        instances = [
+            {"compartment_name": "prod", "up_hours": 168, "down_hours": 0,
+             "monitored_hours": 168, "availability_pct": 100.0, "data_complete": True},
+            {"compartment_name": "prod", "up_hours": 50, "down_hours": 0,
+             "monitored_hours": 50, "availability_pct": None, "data_complete": False},
+        ]
+        stats = compute_compartment_stats(instances, sla_target=99.95)
+        assert stats["compartment_availability_pct"] is None
+        assert stats["data_complete"] is False
 
 
 class TestGetHeatmapResolution:
@@ -410,8 +422,10 @@ class TestGetHeatmapResolution:
 class TestComputeFleetStats:
     def test_fleet_aggregation(self):
         instances = [
-            {"up_hours": 168, "down_hours": 0, "monitored_hours": 168, "availability_pct": 100.0},
-            {"up_hours": 167, "down_hours": 1, "monitored_hours": 168, "availability_pct": 99.40},
+            {"up_hours": 168, "down_hours": 0, "monitored_hours": 168,
+             "availability_pct": 100.0, "data_complete": True},
+            {"up_hours": 167, "down_hours": 1, "monitored_hours": 168,
+             "availability_pct": 99.40, "data_complete": True},
         ]
         fleet = compute_fleet_stats(instances, sla_target=99.95)
         assert fleet["total_instances"] == 2
@@ -423,10 +437,23 @@ class TestComputeFleetStats:
 
     def test_fleet_all_na(self):
         instances = [
-            {"up_hours": 0, "down_hours": 0, "monitored_hours": 0, "availability_pct": None},
+            {"up_hours": 0, "down_hours": 0, "monitored_hours": 0,
+             "availability_pct": None, "data_complete": True},
         ]
         fleet = compute_fleet_stats(instances, sla_target=99.95)
         assert fleet["fleet_availability_pct"] is None
+
+    def test_fleet_incomplete_data_forces_na(self):
+        """One incomplete instance forces fleet to N/A"""
+        instances = [
+            {"up_hours": 168, "down_hours": 0, "monitored_hours": 168,
+             "availability_pct": 100.0, "data_complete": True},
+            {"up_hours": 100, "down_hours": 0, "monitored_hours": 100,
+             "availability_pct": None, "data_complete": False},
+        ]
+        fleet = compute_fleet_stats(instances, sla_target=99.95)
+        assert fleet["fleet_availability_pct"] is None
+        assert fleet["data_complete"] is False
 ```
 
 - [ ] **Step 6: Run tests to verify they fail**
@@ -484,18 +511,22 @@ def compute_instance_stats(hourly_statuses):
 def compute_fleet_stats(instance_stats_list, sla_target):
     """Compute fleet-level availability from per-instance stats.
 
+    If ANY instance has data_complete=False (nodata hours), the fleet
+    availability is set to None (N/A) to fail closed.
+
     Args:
         instance_stats_list: list of dicts from compute_instance_stats
         sla_target: SLA target percentage (e.g. 99.95)
 
     Returns:
         dict with total_instances, fleet_availability_pct, at_target_count,
-        total_up_hours, total_monitored_hours
+        total_up_hours, total_monitored_hours, data_complete
     """
     total_up = sum(s["up_hours"] for s in instance_stats_list)
     total_monitored = sum(s["monitored_hours"] for s in instance_stats_list)
+    all_complete = all(s.get("data_complete", True) for s in instance_stats_list)
 
-    if total_monitored == 0:
+    if not all_complete or total_monitored == 0:
         fleet_pct = None
     else:
         fleet_pct = round(total_up / total_monitored * 100, 2)
@@ -511,6 +542,7 @@ def compute_fleet_stats(instance_stats_list, sla_target):
         "at_target_count": at_target,
         "total_up_hours": total_up,
         "total_monitored_hours": total_monitored,
+        "data_complete": all_complete,
     }
 ```
 
@@ -522,17 +554,21 @@ Add to `compute_availability_report.py`:
 def compute_compartment_stats(instances_in_compartment, sla_target):
     """Compute availability stats for a single compartment.
 
+    If ANY instance in the compartment has data_complete=False (nodata hours),
+    the compartment availability is set to None (N/A) to fail closed.
+
     Args:
         instances_in_compartment: list of instance dicts with stats
         sla_target: SLA target percentage
 
     Returns:
-        dict with instance_count, compartment_availability_pct, at_target_count
+        dict with instance_count, compartment_availability_pct, at_target_count, data_complete
     """
     total_up = sum(s["up_hours"] for s in instances_in_compartment)
     total_monitored = sum(s["monitored_hours"] for s in instances_in_compartment)
+    all_complete = all(s.get("data_complete", True) for s in instances_in_compartment)
 
-    if total_monitored == 0:
+    if not all_complete or total_monitored == 0:
         pct = None
     else:
         pct = round(total_up / total_monitored * 100, 2)
@@ -546,6 +582,7 @@ def compute_compartment_stats(instances_in_compartment, sla_target):
         "instance_count": len(instances_in_compartment),
         "compartment_availability_pct": pct,
         "at_target_count": at_target,
+        "data_complete": all_complete,
     }
 
 
@@ -654,26 +691,36 @@ from compute_availability_report import group_instances_by_compartment
 
 
 class TestGroupInstances:
-    def test_groups_by_compartment(self):
+    def test_groups_by_compartment_ocid(self):
         instances = [
-            {"name": "vm1", "compartment_name": "prod", "availability_pct": 100.0},
-            {"name": "vm2", "compartment_name": "staging", "availability_pct": 99.5},
-            {"name": "vm3", "compartment_name": "prod", "availability_pct": 98.0},
+            {"name": "vm1", "compartment_id": "ocid1.comp.prod", "compartment_name": "prod", "availability_pct": 100.0},
+            {"name": "vm2", "compartment_id": "ocid1.comp.staging", "compartment_name": "staging", "availability_pct": 99.5},
+            {"name": "vm3", "compartment_id": "ocid1.comp.prod", "compartment_name": "prod", "availability_pct": 98.0},
         ]
         groups = group_instances_by_compartment(instances)
-        assert list(groups.keys()) == ["prod", "staging"]
-        assert len(groups["prod"]) == 2
-        assert len(groups["staging"]) == 1
+        assert len(groups) == 2
+        assert len(groups["ocid1.comp.prod"]["instances"]) == 2
+        assert len(groups["ocid1.comp.staging"]["instances"]) == 1
+        assert groups["ocid1.comp.prod"]["name"] == "prod"
 
     def test_sorted_worst_first(self):
         instances = [
-            {"name": "vm1", "compartment_name": "prod", "availability_pct": 100.0},
-            {"name": "vm2", "compartment_name": "prod", "availability_pct": 98.0},
-            {"name": "vm3", "compartment_name": "prod", "availability_pct": 99.5},
+            {"name": "vm1", "compartment_id": "ocid1.comp.prod", "compartment_name": "prod", "availability_pct": 100.0},
+            {"name": "vm2", "compartment_id": "ocid1.comp.prod", "compartment_name": "prod", "availability_pct": 98.0},
+            {"name": "vm3", "compartment_id": "ocid1.comp.prod", "compartment_name": "prod", "availability_pct": 99.5},
         ]
         groups = group_instances_by_compartment(instances)
-        names = [i["name"] for i in groups["prod"]]
+        names = [i["name"] for i in groups["ocid1.comp.prod"]["instances"]]
         assert names == ["vm2", "vm3", "vm1"]  # worst first
+
+    def test_duplicate_names_different_ocids(self):
+        """Two compartments named 'prod' in different branches must not merge"""
+        instances = [
+            {"name": "vm1", "compartment_id": "ocid1.comp.branchA", "compartment_name": "prod", "availability_pct": 100.0},
+            {"name": "vm2", "compartment_id": "ocid1.comp.branchB", "compartment_name": "prod", "availability_pct": 99.0},
+        ]
+        groups = group_instances_by_compartment(instances)
+        assert len(groups) == 2  # NOT merged into one
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -694,9 +741,12 @@ def discover_compartments(identity_client, compartment_id):
     """Get compartment name and list all sub-compartments.
 
     Returns:
-        (root_compartment_name, compartment_map) where compartment_map is
-        {compartment_ocid: compartment_display_name}
+        (root_compartment_name, compartment_map, discovery_warnings) where:
+        - compartment_map: {compartment_ocid: compartment_display_name}
+        - discovery_warnings: list of warning strings (empty = fully successful)
     """
+    discovery_warnings = []
+
     # Get root compartment name
     root = identity_client.get_compartment(compartment_id).data
     root_name = root.name
@@ -715,17 +765,18 @@ def discover_compartments(identity_client, compartment_id):
         for c in sub_compartments:
             compartment_map[c.id] = c.name
     except oci.exceptions.ServiceError as e:
-        log.warning(f"Could not list sub-compartments: {e.message}")
+        msg = f"Could not list sub-compartments: {e.message}"
+        log.warning(msg)
+        discovery_warnings.append(msg)
 
-    return root_name, compartment_map
+    return root_name, compartment_map, discovery_warnings
 
 
 def discover_instances(compute_client, compartment_map, running_only=False):
     """Discover VM instances across compartment tree.
 
     Note: Compute.ListInstances does NOT support compartment_id_in_subtree.
-    We must iterate each compartment individually. This is correct behavior
-    for the Compute API (unlike Monitoring/Log Analytics which do support subtree).
+    We must iterate each compartment individually.
 
     Args:
         compute_client: OCI ComputeClient
@@ -733,9 +784,12 @@ def discover_instances(compute_client, compartment_map, running_only=False):
         running_only: if True, only include RUNNING instances
 
     Returns:
-        list of instance dicts with metadata
+        (instances, discovery_warnings) tuple:
+        - instances: list of instance dicts with metadata
+        - discovery_warnings: list of warning strings for failed compartments
     """
     instances = []
+    discovery_warnings = []
 
     for comp_id, comp_name in compartment_map.items():
         try:
@@ -744,7 +798,9 @@ def discover_instances(compute_client, compartment_map, running_only=False):
                 comp_id,
             ).data
         except oci.exceptions.ServiceError as e:
-            log.warning(f"Could not list instances in {comp_name}: {e.message}")
+            msg = f"Could not list instances in {comp_name}: {e.message}"
+            log.warning(msg)
+            discovery_warnings.append(msg)
             continue
 
         for inst in comp_instances:
@@ -768,31 +824,38 @@ def discover_instances(compute_client, compartment_map, running_only=False):
             })
 
     log.info(f"Discovered {len(instances)} instances across {len(compartment_map)} compartments")
-    return instances
+    return instances, discovery_warnings
 
 
 def group_instances_by_compartment(instances):
-    """Group instances by compartment, sorted worst-availability-first within each group.
+    """Group instances by compartment OCID, sorted worst-availability-first within each group.
+
+    Groups by compartment_id (OCID) to avoid merging distinct compartments
+    that share the same display name. Uses compartment_name for display.
 
     Returns:
-        OrderedDict of {compartment_name: [instances sorted by availability asc]}
+        OrderedDict of {compartment_id: {
+            "name": compartment_display_name,
+            "instances": [instances sorted by availability asc]
+        }}
     """
     groups = {}
     for inst in instances:
-        comp = inst["compartment_name"]
-        if comp not in groups:
-            groups[comp] = []
-        groups[comp].append(inst)
+        comp_id = inst.get("compartment_id", inst.get("compartment_name"))
+        comp_name = inst.get("compartment_name", comp_id)
+        if comp_id not in groups:
+            groups[comp_id] = {"name": comp_name, "instances": []}
+        groups[comp_id]["instances"].append(inst)
 
     # Sort instances within each group: worst availability first
     # None (N/A) sorts before numbers (worst)
-    for comp in groups:
-        groups[comp].sort(key=lambda i: (
+    for comp_id in groups:
+        groups[comp_id]["instances"].sort(key=lambda i: (
             i.get("availability_pct") is not None,
             i.get("availability_pct", 0),
         ))
 
-    return OrderedDict(sorted(groups.items()))
+    return OrderedDict(sorted(groups.items(), key=lambda x: x[1]["name"]))
 ```
 
 - [ ] **Step 4: Run tests**
@@ -985,15 +1048,15 @@ def collect_all_metrics(monitoring_client, root_compartment_id, compartment_map,
     - Otherwise: per-compartment queries with subtree=False
 
     Returns:
-        (cpu_metrics, status_metrics, failed_compartments) where:
+        (cpu_metrics, status_metrics, failed_instance_ids) where:
         - cpu_metrics: {instance_ocid: {hour_key: value}}
         - status_metrics: {instance_ocid: {hour_key: value}}
-        - failed_compartments: set of compartment OCIDs where queries failed
+        - failed_instance_ids: set of instance OCIDs where metric queries failed
     """
     hours = int((end_time - start_time).total_seconds() / 3600)
     cpu_metrics = {}
     status_metrics = {}
-    failed_compartments = set()
+    failed_instance_ids = set()
 
     use_subtree = is_tenancy_ocid(root_compartment_id)
 
@@ -1041,9 +1104,11 @@ def collect_all_metrics(monitoring_client, root_compartment_id, compartment_map,
             status_metrics.update(batch_status)
 
             if cpu_failed or status_failed:
-                failed_compartments.add(comp_id)
+                # Mark specific instances in this batch as failed,
+                # not the whole compartment — preserves successful batches
+                failed_instance_ids.update(batch)
 
-    return cpu_metrics, status_metrics, failed_compartments
+    return cpu_metrics, status_metrics, failed_instance_ids
 ```
 
 - [ ] **Step 4: Run all tests**
@@ -1121,25 +1186,24 @@ Add to `compute_availability_report.py`:
 
 ```python
 def build_availability_matrix(instances, hourly_buckets, cpu_metrics, status_metrics,
-                               failed_compartments=None):
+                               failed_instance_ids=None):
     """Build availability matrix from metric data.
 
     Args:
-        instances: list of instance dicts (need id and compartment_id)
+        instances: list of instance dicts (need id) or list of instance ID strings
         hourly_buckets: list of hour keys (ISO format strings)
         cpu_metrics: {instance_id: {hour_key: value}} from CpuUtilization
         status_metrics: {instance_id: {hour_key: value}} from instance_status
-        failed_compartments: set of compartment OCIDs where queries failed
+        failed_instance_ids: set of instance OCIDs where metric queries failed
 
     Returns:
         {instance_id: {hour_key: "up"|"down"|"stopped"|"nodata"}}
     """
-    failed_compartments = failed_compartments or set()
+    failed_instance_ids = failed_instance_ids or set()
     matrix = {}
     for inst in instances:
         inst_id = inst["id"] if isinstance(inst, dict) else inst
-        comp_id = inst.get("compartment_id") if isinstance(inst, dict) else None
-        query_failed = comp_id in failed_compartments if comp_id else False
+        query_failed = inst_id in failed_instance_ids
 
         inst_cpu = cpu_metrics.get(inst_id, {})
         inst_status = status_metrics.get(inst_id, {})
@@ -1302,6 +1366,16 @@ class TestHTMLReport:
         html = generate_html_report(**sample_report_data)
         assert "OCI Compute Availability Report v1.0" in html
 
+    def test_no_warning_when_complete(self, sample_report_data):
+        html = generate_html_report(**sample_report_data)
+        assert "data-warning" not in html
+
+    def test_warning_banner_when_incomplete(self, sample_report_data):
+        fleet = {**sample_report_data["fleet"], "data_complete": False}
+        html = generate_html_report(**{**sample_report_data, "fleet": fleet})
+        assert "data-warning" in html
+        assert "Incomplete data" in html
+
     def test_heatmap_toggle_hidden_under_50(self, sample_report_data):
         """No toggle button when under 50 instances"""
         html = generate_html_report(**sample_report_data)
@@ -1352,7 +1426,8 @@ Add the full `generate_html_report()` function to `compute_availability_report.p
 
 def generate_html_report(instances, fleet, heatmap_data, all_hours,
                          compartment_name, region, days, sla_target,
-                         start_date, end_date, title=None, logo_data=None):
+                         start_date, end_date, title=None, logo_data=None,
+                         discovery_warnings=None):
     """Generate self-contained HTML availability report.
 
     Args:
@@ -1368,6 +1443,7 @@ def generate_html_report(instances, fleet, heatmap_data, all_hours,
         end_date: formatted end date string
         title: optional custom branding title (top-right)
         logo_data: optional base64-encoded logo data URI
+        discovery_warnings: optional list of warning strings from discovery phase
 
     Returns:
         Complete HTML string
@@ -1394,10 +1470,17 @@ The function builds the HTML string section by section. Each section below must 
   - `.tooltip` fixed position, bg #2C2C2A, white text, 11px, 4px radius, display none
   - `@media print` — white bg, hidden tooltips, visible borders
 
-**Section B: HEADER**
+**Section B: HEADER + DATA QUALITY BANNER**
 - `<div class="header">` with h1 "Compute availability report"
 - Meta bar: Compartment, Region, Period (start — end, N days), SLA target
 - If `title` or `logo_data`: right-aligned branding area
+- **If `data_complete` is False on fleet stats OR there are discovery_warnings**:
+  show a visible amber warning banner below the header:
+  `<div class="data-warning">` with amber background (#FAEEDA), border (#EF9F27),
+  icon, and text: "Incomplete data: some metrics or compartments could not be queried.
+  Affected availability values are shown as N/A." This banner MUST be visible without
+  scrolling. The CSS class `.data-warning` should be prominent (padding 12px 16px,
+  border-left 4px solid #EF9F27).
 
 **Section C: METRIC CARDS**
 - 4 cards in `.metrics` grid:
@@ -1630,11 +1713,12 @@ def main():
 
     compartment_name = args.compartment_name
     if not compartment_name:
-        compartment_name, compartment_map = discover_compartments(identity_client, args.compartment_id)
+        compartment_name, compartment_map, disc_warnings = discover_compartments(identity_client, args.compartment_id)
     else:
-        _, compartment_map = discover_compartments(identity_client, args.compartment_id)
+        _, compartment_map, disc_warnings = discover_compartments(identity_client, args.compartment_id)
 
-    instances = discover_instances(compute_client, compartment_map, args.running_only)
+    instances, inst_disc_warnings = discover_instances(compute_client, compartment_map, args.running_only)
+    disc_warnings.extend(inst_disc_warnings)
     if not instances:
         log.error("No instances found. Exiting.")
         sys.exit(1)
@@ -1647,19 +1731,19 @@ def main():
     log.info("Collecting metrics for %d instances over %d days (%d hours)...",
              len(instances), args.days, len(hourly_buckets))
     monitoring_client = make_client(oci.monitoring.MonitoringClient, config, signer)
-    cpu_metrics, status_metrics, failed_compartments = collect_all_metrics(
+    cpu_metrics, status_metrics, failed_instance_ids = collect_all_metrics(
         monitoring_client, args.compartment_id, compartment_map,
         instances, start_time, end_time,
     )
 
-    if failed_compartments:
-        log.warning(f"Metric queries failed for {len(failed_compartments)} compartment(s). "
+    if failed_instance_ids:
+        log.warning(f"Metric queries failed for {len(failed_instance_ids)} instance(s). "
                     "Affected instances will show N/A availability.")
 
     # Phase 4: Compute availability
     log.info("Computing availability...")
     matrix = build_availability_matrix(
-        instances, hourly_buckets, cpu_metrics, status_metrics, failed_compartments
+        instances, hourly_buckets, cpu_metrics, status_metrics, failed_instance_ids
     )
 
     # Merge stats into instance dicts
@@ -1692,6 +1776,7 @@ def main():
         end_date=(end_time - timedelta(hours=1)).strftime("%b %d, %Y"),
         title=args.title,
         logo_data=logo_data,
+        discovery_warnings=disc_warnings if disc_warnings else None,
     )
 
     # Write to file
