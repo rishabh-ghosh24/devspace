@@ -52,6 +52,10 @@ def parse_args(argv=None):
     parser.add_argument("--title", help="Custom report title (top-right header)")
     parser.add_argument("--logo", help="Path to logo image (embedded as base64)")
 
+    # Exclusions
+    parser.add_argument("--exclude", nargs="*", default=[],
+                        help="Instance names or OCIDs to exclude from the report")
+
     # Output
     parser.add_argument("--output", help="Output HTML file path")
     parser.add_argument("--upload", action="store_true", help="Upload to Object Storage")
@@ -259,9 +263,15 @@ def compute_fleet_stats(instance_stats_list, sla_target, discovery_warnings=None
     discovery_complete = len(discovery_warnings) == 0
     report_complete = data_complete and discovery_complete
 
+    # Only count instances with computable availability toward SLA target
+    # Stopped instances (availability_pct=None, monitored_hours=0) are excluded
+    monitorable = [s for s in instance_stats_list if s["availability_pct"] is not None]
+    monitorable_count = len(monitorable)
+
     if not report_complete or total_monitored == 0:
         return {
             "discovered_instance_count": len(instance_stats_list),
+            "monitorable_count": monitorable_count,
             "fleet_availability_pct": None,
             "at_target_count": None,
             "total_up_hours": None if not report_complete else total_up,
@@ -273,12 +283,13 @@ def compute_fleet_stats(instance_stats_list, sla_target, discovery_warnings=None
 
     fleet_pct = round(total_up / total_monitored * 100, 2)
     at_target = sum(
-        1 for s in instance_stats_list
-        if s["availability_pct"] is not None and s["availability_pct"] >= sla_target
+        1 for s in monitorable
+        if s["availability_pct"] >= sla_target
     )
 
     return {
         "discovered_instance_count": len(instance_stats_list),
+        "monitorable_count": monitorable_count,
         "fleet_availability_pct": fleet_pct,
         "at_target_count": at_target,
         "total_up_hours": total_up,
@@ -424,7 +435,7 @@ def discover_compartments(identity_client, compartment_id):
     return root_name, compartment_map, discovery_warnings
 
 
-def discover_instances(compute_client, compartment_map, running_only=False):
+def discover_instances(compute_client, compartment_map, running_only=False, exclude_list=None):
     """Discover VM instances across compartment tree.
 
     Note: Compute.ListInstances does NOT support compartment_id_in_subtree.
@@ -463,6 +474,10 @@ def discover_instances(compute_client, compartment_map, running_only=False):
                 continue
             # Skip non-running if --running-only
             if running_only and inst.lifecycle_state != "RUNNING":
+                continue
+            # Skip excluded instances (by name or OCID)
+            if exclude_list and (inst.display_name in exclude_list or inst.id in exclude_list):
+                log.info(f"Excluding instance: {inst.display_name}")
                 continue
 
             instances.append({
@@ -780,9 +795,11 @@ def generate_html_report(instances, fleet, heatmap_data, all_hours,
     else:
         inst_value = str(inst_count)
 
-    # Meeting SLA card
+    # Meeting SLA card — denominator is monitorable instances only
+    # (excludes stopped/N/A instances that have no computable availability)
+    monitorable_count = fleet.get("monitorable_count", inst_count)
     if at_target is not None:
-        sla_value = f"{at_target} / {inst_count}"
+        sla_value = f"{at_target} / {monitorable_count}"
     else:
         sla_value = "N/A"
 
@@ -831,8 +848,12 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans
 .donut-center .big {{ font-size: 24px; font-weight: 600; color: #1a1a1a; }}
 .donut-center .sub {{ font-size: 12px; color: #888780; }}
 .tbl-wrap {{ background: #fff; border-radius: 10px; border: 1px solid #e8e6df; overflow: hidden; }}
-.comp-header {{ background: #faf9f6; padding: 10px 16px; font-weight: 600; font-size: 12px; color: #1a1a1a; border-bottom: 1px solid #e8e6df; }}
-.comp-header + .comp-header {{ border-top: 2px solid #e8e6df; }}
+.comp-section {{ border: none; }}
+.comp-section + .comp-section {{ border-top: 2px solid #e8e6df; }}
+.comp-header {{ background: #faf9f6; padding: 10px 16px; font-weight: 600; font-size: 12px; color: #1a1a1a; border-bottom: 1px solid #e8e6df; cursor: pointer; list-style: none; }}
+.comp-header::-webkit-details-marker {{ display: none; }}
+.comp-header::before {{ content: "\25BC"; font-size: 10px; margin-right: 8px; color: #888780; display: inline-block; transition: transform 0.2s; }}
+details:not([open]) > .comp-header::before {{ transform: rotate(-90deg); }}
 .comp-header .comp-count {{ color: #888780; font-weight: 400; }}
 .comp-header .comp-pct {{ color: #0f6e56; }}
 table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
@@ -975,13 +996,10 @@ td.center {{ text-align: center; }}
         comp_pct_str = f"{comp_pct:.2f}%" if comp_pct is not None else "N/A"
         comp_pct_color = "#0f6e56" if comp_pct is not None and comp_pct >= sla_target else "#a32d2d"
 
-        # Compartment header
-        if not first_comp:
-            parts.append(f'<div class="comp-header" style="border-top:2px solid #e8e6df;">')
-        else:
-            parts.append('<div class="comp-header">')
-        parts.append(f'{comp_name} <span class="comp-count">({len(comp_instances)} instances)</span> &mdash; <span class="comp-pct" style="color:{comp_pct_color};">{comp_pct_str}</span>')
-        parts.append('</div>')
+        # Compartment header — collapsible via <details>/<summary>
+        border_style = ' style="border-top:2px solid #e8e6df;"' if not first_comp else ''
+        parts.append(f'<details class="comp-section" open{border_style}>')
+        parts.append(f'<summary class="comp-header">{comp_name} <span class="comp-count">({len(comp_instances)} instances)</span> &mdash; <span class="comp-pct" style="color:{comp_pct_color};">{comp_pct_str}</span></summary>')
 
         # Table
         parts.append('<table>')
@@ -1067,6 +1085,7 @@ td.center {{ text-align: center; }}
 </tr>""")
 
         parts.append('</tbody></table>')
+        parts.append('</details>')
 
     parts.append('</div></div>')  # close tbl-wrap and summary-row
 
@@ -1380,7 +1399,10 @@ def main():
     else:
         _, compartment_map, disc_warnings = discover_compartments(identity_client, args.compartment_id)
 
-    instances, inst_disc_warnings = discover_instances(compute_client, compartment_map, args.running_only)
+    instances, inst_disc_warnings = discover_instances(
+        compute_client, compartment_map, args.running_only,
+        exclude_list=args.exclude if args.exclude else None,
+    )
     disc_warnings.extend(inst_disc_warnings)
     if not instances:
         log.error("No instances found. Exiting.")
@@ -1447,7 +1469,7 @@ def main():
         output_path = args.output
     else:
         safe_name = sanitize_filename(compartment_name)
-        date_str = datetime.now().strftime("%Y%m%d")
+        date_str = datetime.now().strftime("%Y%m%d_%H%M")
         output_path = f"availability_report_{safe_name}_{date_str}.html"
 
     with open(output_path, "w", encoding="utf-8") as f:
