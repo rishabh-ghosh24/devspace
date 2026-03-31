@@ -7,6 +7,7 @@ using CpuUtilization and instance_status metrics.
 
 import argparse
 import base64
+import html
 import logging
 import math
 import os
@@ -1007,7 +1008,7 @@ td.center {{ text-align: center; }}
         # Compartment header — collapsible via <details>/<summary>
         border_style = ' style="border-top:2px solid #e8e6df;"' if not first_comp else ''
         parts.append(f'<details class="comp-section" open{border_style}>')
-        parts.append(f'<summary class="comp-header">{comp_name} <span class="comp-count">({len(comp_instances)} instances)</span> &mdash; <span class="comp-pct" style="color:{comp_pct_color};">{comp_pct_str}</span></summary>')
+        parts.append(f'<summary class="comp-header">{html.escape(comp_name)} <span class="comp-count">({len(comp_instances)} instances)</span> &mdash; <span class="comp-pct" style="color:{comp_pct_color};">{comp_pct_str}</span></summary>')
 
         # Table
         parts.append('<table>')
@@ -1085,8 +1086,8 @@ td.center {{ text-align: center; }}
             dt_color = "#a32d2d" if downtime_min > 0 else "inherit"
 
             parts.append(f"""<tr>
-<td><span class="dot {dot_cls}"></span>{name}</td>
-<td class="center"><span class="badge {badge_cls}">{state}</span></td>
+<td><span class="dot {dot_cls}"></span>{html.escape(name)}</td>
+<td class="center"><span class="badge {badge_cls}">{html.escape(state)}</span></td>
 <td style="font-weight:600;color:{avail_color};">{avail_str}</td>
 <td class="center"><div class="uptime-cell"><span class="uptime-hours">{up_h}h</span><div class="avail-bar">{"".join(bar_segments)}</div></div></td>
 <td style="color:{dt_color};">{downtime_min} min</td>
@@ -1139,7 +1140,7 @@ td.center {{ text-align: center; }}
         comp_name = group["name"]
         comp_instances = group["instances"]
 
-        parts.append(f'<div class="heatmap-comp">{comp_name}</div>')
+        parts.append(f'<div class="heatmap-comp">{html.escape(comp_name)}</div>')
 
         for inst in comp_instances:
             inst_id = inst["id"]
@@ -1178,10 +1179,10 @@ td.center {{ text-align: center; }}
                     hour_key = all_hours[b_start]
                 else:
                     hour_key = ""
-                blocks.append(f'<div class="{blk_cls}" data-name="{inst_name}" data-hour="{hour_key}" data-status="{agg}"></div>')
+                blocks.append(f'<div class="{blk_cls}" data-name="{html.escape(inst_name, quote=True)}" data-hour="{hour_key}" data-status="{agg}"></div>')
 
             parts.append(f'<div class="heatmap-row{row_hidden}">')
-            parts.append(f'<div class="heatmap-label">{inst_name}</div>')
+            parts.append(f'<div class="heatmap-label">{html.escape(inst_name)}</div>')
             parts.append(f'<div class="heatmap-pct" style="color:{pct_color};">{pct_str}</div>')
             parts.append(f'<div class="heatmap-blocks">{"".join(blocks)}</div>')
             parts.append('</div>')
