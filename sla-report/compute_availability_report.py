@@ -6,9 +6,11 @@ using CpuUtilization and instance_status metrics.
 """
 
 import argparse
+import base64
 import logging
 import math
 import os
+import re
 import sys
 from collections import OrderedDict
 from datetime import datetime, timezone, timedelta
@@ -1316,5 +1318,140 @@ def upload_report(config, signer, compartment_id, html_content, object_name,
     return par_url
 
 
-if __name__ == "__main__":
+def sanitize_filename(name):
+    """Convert compartment name to safe filename component."""
+    return re.sub(r'[^\w\-]', '_', name).lower()
+
+
+def embed_logo(logo_path):
+    """Read logo file and return base64-encoded data URI."""
+    if not logo_path or not os.path.isfile(logo_path):
+        return None
+    ext = os.path.splitext(logo_path)[1].lower()
+    mime_types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                  ".svg": "image/svg+xml", ".gif": "image/gif"}
+    mime = mime_types.get(ext, "image/png")
+    with open(logo_path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+
+def main():
     args = parse_args()
+
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    log.info("OCI Compute Availability Report v%s", VERSION)
+
+    # Phase 1: Auth
+    log.info("Authenticating (%s)...", args.auth)
+    config, signer = setup_auth(args)
+
+    # Phase 2: Discover
+    log.info("Discovering instances...")
+    identity_client = make_client(oci.identity.IdentityClient, config, signer)
+    compute_client = make_client(oci.core.ComputeClient, config, signer)
+
+    compartment_name = args.compartment_name
+    if not compartment_name:
+        compartment_name, compartment_map, disc_warnings = discover_compartments(identity_client, args.compartment_id)
+    else:
+        _, compartment_map, disc_warnings = discover_compartments(identity_client, args.compartment_id)
+
+    instances, inst_disc_warnings = discover_instances(compute_client, compartment_map, args.running_only)
+    disc_warnings.extend(inst_disc_warnings)
+    if not instances:
+        log.error("No instances found. Exiting.")
+        sys.exit(1)
+
+    # Phase 3: Collect metrics
+    end_time = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    start_time = end_time - timedelta(days=args.days)
+    hourly_buckets = build_hourly_buckets(start_time, end_time)
+
+    log.info("Collecting metrics for %d instances over %d days (%d hours)...",
+             len(instances), args.days, len(hourly_buckets))
+    monitoring_client = make_client(oci.monitoring.MonitoringClient, config, signer)
+    cpu_metrics, status_metrics, failed_instance_ids = collect_all_metrics(
+        monitoring_client, args.compartment_id, compartment_map,
+        instances, start_time, end_time,
+    )
+
+    if failed_instance_ids:
+        log.warning(f"Metric queries failed for {len(failed_instance_ids)} instance(s). "
+                    "Affected instances will show N/A availability.")
+
+    # Phase 4: Compute availability
+    log.info("Computing availability...")
+    matrix = build_availability_matrix(
+        instances, hourly_buckets, cpu_metrics, status_metrics, failed_instance_ids
+    )
+
+    # Merge stats into instance dicts
+    for inst in instances:
+        stats = compute_instance_stats(matrix[inst["id"]])
+        inst.update(stats)
+
+    fleet = compute_fleet_stats(instances, args.sla_target, discovery_warnings=disc_warnings)
+
+    # Build heatmap data (list of statuses per instance)
+    heatmap_data = {}
+    for inst in instances:
+        heatmap_data[inst["id"]] = [matrix[inst["id"]][h] for h in hourly_buckets]
+
+    # Phase 5: Render
+    log.info("Generating report...")
+    region = args.region or config.get("region", "unknown")
+    logo_data = embed_logo(args.logo) if args.logo else None
+
+    html = generate_html_report(
+        instances=instances,
+        fleet=fleet,
+        heatmap_data=heatmap_data,
+        all_hours=hourly_buckets,
+        compartment_name=compartment_name,
+        region=region,
+        days=args.days,
+        sla_target=args.sla_target,
+        start_date=start_time.strftime("%b %d, %Y"),
+        end_date=(end_time - timedelta(hours=1)).strftime("%b %d, %Y"),
+        title=args.title,
+        logo_data=logo_data,
+        discovery_warnings=disc_warnings if disc_warnings else None,
+    )
+
+    # Write to file
+    if args.output:
+        output_path = args.output
+    else:
+        safe_name = sanitize_filename(compartment_name)
+        date_str = datetime.now().strftime("%Y%m%d")
+        output_path = f"availability_report_{safe_name}_{date_str}.html"
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    log.info("Report written to %s", output_path)
+
+    # Phase 6: Upload (optional)
+    if args.upload:
+        log.info("Uploading to Object Storage...")
+        object_name = os.path.basename(output_path)
+        par_url = upload_report(
+            config, signer, args.compartment_id, html, object_name,
+            args.bucket, args.os_namespace, args.par_expiry_days,
+        )
+        if par_url:
+            log.info("PAR URL (expires in %d days):", args.par_expiry_days)
+            print(par_url)
+
+    log.info("Done. Fleet availability: %s",
+             f"{fleet['fleet_availability_pct']}%" if fleet['fleet_availability_pct'] is not None else "N/A")
+
+
+if __name__ == "__main__":
+    main()
