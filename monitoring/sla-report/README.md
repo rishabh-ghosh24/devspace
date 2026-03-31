@@ -223,8 +223,8 @@ This design ensures that availability numbers are never overstated. An N/A resul
 2. **Current non-terminated instances only** -- the report discovers instances that currently exist in a non-TERMINATED state. Instances that were deleted during the reporting period are not included.
 3. **Maximum 90-day lookback** -- OCI Monitoring retains hourly metric data for 90 days.
 4. **Single region per run** -- each execution scans one region. Run the tool multiple times with `--region` for multi-region coverage.
-5. **Monitoring agent required** -- instances without the `oci_computeagent` will show as stopped/no-data.
-6. **Heartbeat proxy** -- availability is determined by metric emission (CpuUtilization) and infrastructure health status (instance_status). Rare degradation scenarios not flagged by `instance_status` will not be detected.
+5. **Monitoring agent enhances accuracy** -- `CpuUtilization` requires the `oci_computeagent` inside the VM. However, `instance_status` is emitted by the hypervisor independently of any agent. Instances without the agent will still be classified using `instance_status` alone (healthy infra = UP, unhealthy = DOWN), but the CpuUtilization signal will be absent.
+6. **Infrastructure availability, not application health** -- this tool measures whether the OCI compute infrastructure was available (via CpuUtilization + instance_status), not whether applications running on the instance were healthy. Application-level issues (crashed process, unresponsive app) are not detected.
 
 ## Object Storage upload with PAR
 
