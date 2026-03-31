@@ -6,20 +6,45 @@ The tool queries two OCI Monitoring metrics (CpuUtilization and instance_status)
 
 ## Prerequisites
 
-- Python 3.8 or later
-- OCI Python SDK (`pip install oci`)
-- IAM policies granting read access to instances, metrics, and compartments (see [IAM Setup](#iam-setup))
-- OCI Compute instances with the monitoring agent enabled
+- **OS:** Oracle Enterprise Linux 9 (OEL 9), Oracle Linux 8, or any Linux with Python 3.8+
+- **Python:** 3.8 or later with pip
+- **OCI Python SDK:** `pip3 install oci`
+- **git:** for cloning the repository
+- **IAM policies** granting read access to instances, metrics, and compartments (see [IAM Setup](#iam-setup))
+- **OCI Compute instances** with the monitoring agent enabled
 
-## Quick start
+## Quick start — fresh OEL 9 VM
+
+The fastest way to get started on a fresh OCI VM (OEL 9):
 
 ```bash
-# Clone the repository
-git clone https://github.com/RishabhGhosh/oci-compute-availability-report.git
-cd oci-compute-availability-report
+# One-line setup: installs git, python3, oci SDK, clones repo, runs tests
+curl -sL https://raw.githubusercontent.com/rishabh-ghosh24/devspace/sla-report/sla-report/scripts/setup_oel9.sh | bash
+```
 
-# Install the OCI SDK
-pip install oci
+Or step by step:
+
+```bash
+# 1. Install system dependencies
+sudo dnf install -y git python3 python3-pip
+
+# 2. Install OCI Python SDK
+pip3 install --user oci
+
+# 3. Clone and checkout
+git clone https://github.com/rishabh-ghosh24/devspace.git
+cd devspace
+git checkout sla-report
+cd sla-report
+
+# 4. Verify setup
+python3 -m pytest tests/ -v
+```
+
+## Quick start — generating reports
+
+```bash
+cd ~/devspace/sla-report
 
 # Generate a 7-day report using OCI config file auth
 python3 compute_availability_report.py \
@@ -31,6 +56,10 @@ python3 compute_availability_report.py \
   --auth config --profile DEFAULT \
   --compartment-id ocid1.tenancy.oc1..aaaa... \
   --days 30
+
+# Using Instance Principals (on OCI VM with dynamic group)
+python3 compute_availability_report.py \
+  --compartment-id ocid1.compartment.oc1..aaaa...
 ```
 
 The report is saved as `availability_report_<compartment>_<YYYYMMDD>.html` in the current directory. Open it in any browser -- no internet connection required.
@@ -186,14 +215,14 @@ To generate reports on a schedule, set up a cron job on the monitoring VM:
 
 ```bash
 # Weekly report every Monday at 6:00 AM UTC
-0 6 * * 1 cd /home/opc/oci-compute-availability-report && \
+0 6 * * 1 cd /home/opc/devspace/sla-report && \
   python3 compute_availability_report.py \
     --compartment-id ocid1.tenancy.oc1..aaaa... \
     --days 7 --upload --bucket sla-reports \
     >> /var/log/availability-report.log 2>&1
 
 # Monthly report on the 1st of each month
-0 6 1 * * cd /home/opc/oci-compute-availability-report && \
+0 6 1 * * cd /home/opc/devspace/sla-report && \
   python3 compute_availability_report.py \
     --compartment-id ocid1.tenancy.oc1..aaaa... \
     --days 30 --upload --bucket sla-reports \
@@ -264,8 +293,80 @@ terraform apply
 ## Running tests
 
 ```bash
-pip install pytest
-python -m pytest tests/ -v
+pip3 install --user pytest
+cd ~/devspace/sla-report
+python3 -m pytest tests/ -v
+```
+
+## Troubleshooting
+
+### `git: command not found`
+
+Install git on OEL 9:
+
+```bash
+sudo dnf install -y git
+```
+
+### `python3: command not found` or `pip3: command not found`
+
+Install Python 3 and pip on OEL 9:
+
+```bash
+sudo dnf install -y python3 python3-pip
+```
+
+### `ModuleNotFoundError: No module named 'oci'`
+
+Install the OCI Python SDK:
+
+```bash
+pip3 install --user oci
+```
+
+If you get a permissions error, use `--user` to install in your home directory (no sudo needed).
+
+### `oci.exceptions.ServiceError: NotAuthorizedOrNotFound`
+
+Your IAM policies are missing or incorrect. Verify:
+
+1. **Instance Principals auth:** the VM is in the correct dynamic group, and the dynamic group has the required IAM policies (see [IAM Setup](#iam-setup)).
+2. **Config file auth:** the user in your `~/.oci/config` profile has the required permissions.
+3. **Compartment OCID:** verify the OCID is correct and the compartment exists.
+
+### `donut chart not rendering in report`
+
+The file `chart.min.js` must be in the same directory as `compute_availability_report.py`. If missing:
+
+```bash
+cd ~/devspace/sla-report
+curl -sL "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" -o chart.min.js
+```
+
+### `No instances found. Exiting.`
+
+Possible causes:
+
+- The compartment has no VM instances (check OCI Console)
+- IAM policies don't grant `read instances` (see [IAM Setup](#iam-setup))
+- All instances are TERMINATED
+- Using `--running-only` but all instances are currently stopped
+
+### Report shows N/A instead of availability percentages
+
+This is expected fail-closed behavior. See [Incomplete data and N/A values](#incomplete-data-and-na-values). Common causes:
+
+- Metric API query failed (check the warning banner in the report)
+- Compartment discovery partially failed (report shows "partial scope")
+- Instance was stopped for the entire reporting period
+
+### `pip3 install oci` is slow or fails on ARM instances
+
+On ARM-based OCI instances (e.g., Ampere A1), the cryptography package may need to compile from source:
+
+```bash
+sudo dnf install -y python3-devel gcc openssl-devel
+pip3 install --user oci
 ```
 
 ## License
