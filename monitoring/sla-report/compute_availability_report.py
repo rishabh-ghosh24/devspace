@@ -1397,6 +1397,8 @@ def main():
     compartment_name = args.compartment_name
     if not compartment_name:
         compartment_name, compartment_map, disc_warnings = discover_compartments(identity_client, args.compartment_id)
+        if is_tenancy_ocid(args.compartment_id):
+            compartment_name = f"{compartment_name} (tenancy)"
     else:
         _, compartment_map, disc_warnings = discover_compartments(identity_client, args.compartment_id)
 
