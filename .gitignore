@@ -248,3 +248,6 @@ CLAUDE.MD
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Superpowers brainstorm sessions
+.superpowers/
