@@ -62,7 +62,7 @@ python3 compute_availability_report.py \
   --compartment-id ocid1.compartment.oc1..aaaa...
 ```
 
-The report is saved as `availability_report_<compartment>_<YYYYMMDD>.html` in the current directory. Open it in any browser -- no internet connection required.
+The report is saved as `availability_report_<compartment>_<YYYYMMDD_HHMM>.html` in the current directory. Open it in any browser -- no internet connection required.
 
 ## CLI reference
 
@@ -100,6 +100,13 @@ compute_availability_report.py [OPTIONS]
 | `--title TEXT` | Custom title displayed in the top-right header area (e.g., "ACME Corp MSP"). |
 | `--logo PATH` | Path to a logo image file. Embedded as base64 in the report for offline use. |
 
+### Exclusions
+
+| Flag | Description |
+|------|-------------|
+| `--exclude NAME [NAME ...]` | Instance names or OCIDs to exclude from the report. |
+| `--exclude-file PATH` | Path to a file with instance names/OCIDs to exclude (one per line, `#` for comments). |
+
 ### Output
 
 | Flag | Default | Description |
@@ -133,6 +140,30 @@ python3 compute_availability_report.py \
 python3 compute_availability_report.py \
   --compartment-id ocid1.compartment.oc1..aaaa... \
   --days 30 --upload --par-expiry-days 90
+
+# Exclude specific instances by name
+python3 compute_availability_report.py \
+  --compartment-id ocid1.compartment.oc1..aaaa... \
+  --exclude "test-vm" "dev-sandbox"
+
+# Exclude instances from a managed file
+python3 compute_availability_report.py \
+  --compartment-id ocid1.compartment.oc1..aaaa... \
+  --exclude-file exclude.list
+```
+
+### Exclusion file format
+
+Create a plain text file with one instance name or OCID per line. Lines starting with `#` are comments:
+
+```
+# exclude.list — instances to exclude from SLA reports
+# Test and development instances
+test-vm-staging
+dev-sandbox
+
+# Specific instance by OCID
+ocid1.instance.oc1.iad.aaaa...example
 ```
 
 ## Report sections
@@ -147,12 +178,14 @@ Four summary cards at the top of the report:
 |------|-------------|
 | Fleet availability | Overall availability percentage across all instances. Color-coded: green (meets SLA), amber (>= 99%), red (below 99%). |
 | Instances monitored | Total number of VM instances included in the report. |
-| Meeting SLA target | Count of instances meeting or exceeding the configured SLA target. |
+| Meeting SLA target | Count of monitorable instances (excludes stopped/N/A) meeting or exceeding the configured SLA target. |
 | Total uptime hours | Aggregate uptime hours out of total monitored hours. |
 
 ### Summary table
 
-A per-instance breakdown grouped by compartment. Each compartment group shows a header with the compartment name, instance count, and compartment-level availability. Within each group, instances are sorted worst-availability-first.
+A per-instance breakdown grouped by compartment. Each compartment group is **collapsible** — click the arrow to expand or collapse. The header shows compartment name, instance count, and compartment-level availability. Within each group, instances are sorted worst-availability-first.
+
+When using a tenancy root OCID, the report header shows `Compartment: <name> (tenancy)` to indicate tenancy-wide scope.
 
 Columns: Instance name, lifecycle status (colored badge), availability percentage, uptime hours (with stacked bar showing up/down/stopped distribution), and downtime.
 
