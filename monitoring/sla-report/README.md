@@ -19,7 +19,7 @@ The fastest way to get started on a fresh OCI VM (OEL 9):
 
 ```bash
 # One-line setup: installs git, python3, oci SDK, clones repo, runs tests
-curl -sL https://raw.githubusercontent.com/rishabh-ghosh24/devspace/sla-report/sla-report/scripts/setup_oel9.sh | bash
+curl -sL https://raw.githubusercontent.com/rishabh-ghosh24/devspace/sla-report/monitoring/sla-report/scripts/setup_oel9.sh | bash
 ```
 
 Or step by step:
@@ -35,7 +35,7 @@ pip3 install --user oci
 git clone https://github.com/rishabh-ghosh24/devspace.git
 cd devspace
 git checkout sla-report
-cd sla-report
+cd monitoring/sla-report
 
 # 4. Verify setup
 python3 -m pytest tests/ -v
@@ -215,14 +215,14 @@ To generate reports on a schedule, set up a cron job on the monitoring VM:
 
 ```bash
 # Weekly report every Monday at 6:00 AM UTC
-0 6 * * 1 cd /home/opc/devspace/sla-report && \
+0 6 * * 1 cd /home/opc/devspace/monitoring/sla-report && \
   python3 compute_availability_report.py \
     --compartment-id ocid1.tenancy.oc1..aaaa... \
     --days 7 --upload --bucket sla-reports \
     >> /var/log/availability-report.log 2>&1
 
 # Monthly report on the 1st of each month
-0 6 1 * * cd /home/opc/devspace/sla-report && \
+0 6 1 * * cd /home/opc/devspace/monitoring/sla-report && \
   python3 compute_availability_report.py \
     --compartment-id ocid1.tenancy.oc1..aaaa... \
     --days 30 --upload --bucket sla-reports \

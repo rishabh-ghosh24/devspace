@@ -54,7 +54,7 @@ else
     git checkout "$BRANCH"
 fi
 
-cd "$INSTALL_DIR/sla-report"
+cd "$INSTALL_DIR/monitoring/sla-report"
 echo "  Working directory: $(pwd)"
 
 # ── 4. Verify OCI CLI / config ────────────────────────────────
@@ -104,7 +104,7 @@ echo "════════════════════════�
 echo ""
 echo "Generate your first report:"
 echo ""
-echo "  cd $INSTALL_DIR/sla-report"
+echo "  cd $INSTALL_DIR/monitoring/sla-report"
 echo ""
 echo "  # Using Instance Principals (on OCI VM with dynamic group):"
 echo "  python3 compute_availability_report.py \\"
