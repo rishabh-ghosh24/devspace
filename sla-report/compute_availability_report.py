@@ -1250,5 +1250,71 @@ td.center {{ text-align: center; }}
     return "".join(parts)
 
 
+def upload_report(config, signer, compartment_id, html_content, object_name,
+                  bucket_name, namespace=None, par_expiry_days=30):
+    """Upload HTML report to Object Storage and create a PAR link.
+
+    Args:
+        config: OCI config dict
+        signer: OCI signer (or None for config auth)
+        compartment_id: compartment OCID for the bucket
+        html_content: HTML string to upload
+        object_name: object name in the bucket
+        bucket_name: bucket name
+        namespace: Object Storage namespace (auto-detected if None)
+        par_expiry_days: PAR expiry in days
+
+    Returns:
+        PAR URL string, or None on failure
+    """
+    os_client = make_client(oci.object_storage.ObjectStorageClient, config, signer)
+
+    # Auto-detect namespace
+    if not namespace:
+        namespace = os_client.get_namespace().data
+
+    # Create bucket if it doesn't exist
+    try:
+        os_client.get_bucket(namespace, bucket_name)
+    except oci.exceptions.ServiceError as e:
+        if e.status == 404:
+            log.info(f"Creating bucket '{bucket_name}'...")
+            os_client.create_bucket(
+                namespace,
+                oci.object_storage.models.CreateBucketDetails(
+                    name=bucket_name,
+                    compartment_id=compartment_id,
+                    public_access_type="NoPublicAccess",
+                ),
+            )
+        else:
+            log.error(f"Bucket check failed: {e.message}")
+            return None
+
+    # Upload
+    os_client.put_object(
+        namespace, bucket_name, object_name,
+        html_content.encode("utf-8"),
+        content_type="text/html",
+    )
+    log.info(f"Uploaded to {namespace}/{bucket_name}/{object_name}")
+
+    # Create PAR
+    expiry = datetime.now(timezone.utc) + timedelta(days=par_expiry_days)
+    par = os_client.create_preauthenticated_request(
+        namespace, bucket_name,
+        oci.object_storage.models.CreatePreauthenticatedRequestDetails(
+            name=f"availability-report-{object_name}",
+            access_type="ObjectRead",
+            time_expires=expiry,
+            object_name=object_name,
+            bucket_listing_action="Deny",
+        ),
+    ).data
+
+    par_url = f"https://objectstorage.{config.get('region', 'unknown')}.oraclecloud.com{par.access_uri}"
+    return par_url
+
+
 if __name__ == "__main__":
     args = parse_args()
