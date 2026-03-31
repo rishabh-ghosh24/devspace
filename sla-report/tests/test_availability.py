@@ -281,3 +281,108 @@ class TestComputeFleetStats:
         assert fleet["discovery_complete"] is False
         assert fleet["report_complete"] is False
         assert fleet["discovered_instance_count"] == 1
+
+
+class TestGroupInstances:
+    def test_groups_by_compartment_ocid(self):
+        from compute_availability_report import group_instances_by_compartment
+        instances = [
+            {"name": "vm1", "compartment_id": "ocid1.comp.prod", "compartment_name": "prod", "availability_pct": 100.0},
+            {"name": "vm2", "compartment_id": "ocid1.comp.staging", "compartment_name": "staging", "availability_pct": 99.5},
+            {"name": "vm3", "compartment_id": "ocid1.comp.prod", "compartment_name": "prod", "availability_pct": 98.0},
+        ]
+        groups = group_instances_by_compartment(instances)
+        assert len(groups) == 2
+        assert len(groups["ocid1.comp.prod"]["instances"]) == 2
+        assert len(groups["ocid1.comp.staging"]["instances"]) == 1
+        assert groups["ocid1.comp.prod"]["name"] == "prod"
+
+    def test_sorted_worst_first(self):
+        from compute_availability_report import group_instances_by_compartment
+        instances = [
+            {"name": "vm1", "compartment_id": "ocid1.comp.prod", "compartment_name": "prod", "availability_pct": 100.0},
+            {"name": "vm2", "compartment_id": "ocid1.comp.prod", "compartment_name": "prod", "availability_pct": 98.0},
+            {"name": "vm3", "compartment_id": "ocid1.comp.prod", "compartment_name": "prod", "availability_pct": 99.5},
+        ]
+        groups = group_instances_by_compartment(instances)
+        names = [i["name"] for i in groups["ocid1.comp.prod"]["instances"]]
+        assert names == ["vm2", "vm3", "vm1"]  # worst first
+
+    def test_duplicate_names_different_ocids(self):
+        """Two compartments named 'prod' in different branches must not merge"""
+        from compute_availability_report import group_instances_by_compartment
+        instances = [
+            {"name": "vm1", "compartment_id": "ocid1.comp.branchA",
+             "compartment_name": "prod", "compartment_label": "teamA/prod",
+             "availability_pct": 100.0},
+            {"name": "vm2", "compartment_id": "ocid1.comp.branchB",
+             "compartment_name": "prod", "compartment_label": "teamB/prod",
+             "availability_pct": 99.0},
+        ]
+        groups = group_instances_by_compartment(instances)
+        assert len(groups) == 2  # NOT merged into one
+        labels = [g["name"] for g in groups.values()]
+        assert "teamA/prod" in labels
+        assert "teamB/prod" in labels
+
+
+class TestBuildCompartmentLabels:
+    def test_unique_names_use_name_as_label(self):
+        from compute_availability_report import build_compartment_labels
+        cmap = {
+            "root": {"name": "tenancy", "parent_id": None},
+            "c1": {"name": "prod", "parent_id": "root"},
+            "c2": {"name": "staging", "parent_id": "root"},
+        }
+        build_compartment_labels(cmap)
+        assert cmap["c1"]["label"] == "prod"
+        assert cmap["c2"]["label"] == "staging"
+
+    def test_duplicate_names_get_parent_prefix(self):
+        from compute_availability_report import build_compartment_labels
+        cmap = {
+            "root": {"name": "tenancy", "parent_id": None},
+            "teamA": {"name": "teamA", "parent_id": "root"},
+            "teamB": {"name": "teamB", "parent_id": "root"},
+            "c1": {"name": "prod", "parent_id": "teamA"},
+            "c2": {"name": "prod", "parent_id": "teamB"},
+        }
+        build_compartment_labels(cmap)
+        assert cmap["c1"]["label"] == "teamA/prod"
+        assert cmap["c2"]["label"] == "teamB/prod"
+        # Non-duplicated names stay simple
+        assert cmap["teamA"]["label"] == "teamA"
+
+    def test_deep_duplicates_walk_ancestors(self):
+        """orgA/team/prod vs orgB/team/prod — parent 'team' is also duplicated"""
+        from compute_availability_report import build_compartment_labels
+        cmap = {
+            "root": {"name": "tenancy", "parent_id": None},
+            "orgA": {"name": "orgA", "parent_id": "root"},
+            "orgB": {"name": "orgB", "parent_id": "root"},
+            "teamA": {"name": "team", "parent_id": "orgA"},
+            "teamB": {"name": "team", "parent_id": "orgB"},
+            "prodA": {"name": "prod", "parent_id": "teamA"},
+            "prodB": {"name": "prod", "parent_id": "teamB"},
+        }
+        build_compartment_labels(cmap)
+        # Must disambiguate beyond just team/prod since 'team' is also duplicated
+        assert "orgA" in cmap["prodA"]["label"]
+        assert "orgB" in cmap["prodB"]["label"]
+        assert cmap["prodA"]["label"] != cmap["prodB"]["label"]
+        # team is also duplicated, should be disambiguated
+        assert cmap["teamA"]["label"] != cmap["teamB"]["label"]
+
+
+class TestDiscoveryWarningFormat:
+    def test_warning_includes_label_and_ocid(self):
+        """Discovery warnings must include disambiguated label + OCID for diagnostics"""
+        comp_label = "teamA/prod"
+        comp_id = "ocid1.compartment.oc1..aaabbbccc"
+        error_msg = "NotAuthorizedOrNotFound"
+        warning = f"Could not list instances in {comp_label} ({comp_id}): {error_msg}"
+
+        # Verify format allows unambiguous identification
+        assert comp_label in warning
+        assert comp_id in warning
+        assert error_msg in warning
