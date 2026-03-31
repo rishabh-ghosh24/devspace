@@ -679,6 +679,9 @@ try:
         CHART_JS = _f.read()
 except FileNotFoundError:
     CHART_JS = "/* Chart.js not found */"
+    logging.getLogger("availability-report").warning(
+        "chart.min.js not found alongside script; donut chart will not render in reports"
+    )
 
 
 def _aggregate_heatmap_block(statuses):
@@ -852,7 +855,7 @@ td.center {{ text-align: center; }}
 .hblk {{ height: 24px; flex: 1; border-radius: 1.5px; cursor: pointer; }}
 .hblk-up {{ background: #1d9e75; }}
 .hblk-down {{ background: #e24b4a; }}
-.hblk-nodata {{ background: #e8e6df; }}
+.hblk-nodata {{ background: #ef9f27; }}
 .hblk-stopped {{ background: #e8e6df; }}
 .legend {{ display: flex; gap: 16px; align-items: center; font-size: 12px; color: #888780; margin: 12px 0 0; }}
 .legend-block {{ display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }}
@@ -1076,10 +1079,11 @@ td.center {{ text-align: center; }}
             step = 7
         d = first_hour
         while d <= last_hour:
-            date_labels.append(d.strftime("%b %-d"))
+            date_labels.append(f"{d.strftime('%b')} {d.day}")
             d += timedelta(days=step)
-        if date_labels and _dt.strptime(all_hours[-1], "%Y-%m-%dT%H:%M:%SZ").strftime("%b %-d") != date_labels[-1]:
-            date_labels.append(last_hour.strftime("%b %-d"))
+        last_label = f"{last_hour.strftime('%b')} {last_hour.day}"
+        if date_labels and last_label != date_labels[-1]:
+            date_labels.append(last_label)
 
         parts.append('<div class="heatmap-dates">')
         for dl in date_labels:
@@ -1152,7 +1156,8 @@ td.center {{ text-align: center; }}
     parts.append(f"""<div class="legend">
 <span><span class="legend-block" style="background:#1d9e75;"></span> Available</span>
 <span><span class="legend-block" style="background:#e24b4a;"></span> Unavailable</span>
-<span><span class="legend-block" style="background:#e8e6df;"></span> No data / stopped</span>
+<span><span class="legend-block" style="background:#e8e6df;"></span> Stopped</span>
+<span><span class="legend-block" style="background:#ef9f27;"></span> No data (incomplete)</span>
 <span style="margin-left:auto;font-size:11px;">Each block = {resolution_label}</span>
 </div>
 """)
