@@ -49,7 +49,7 @@ class TestHTMLReport:
 
     def test_contains_report_title(self, sample_report_data):
         html = generate_html_report(**sample_report_data)
-        assert "Compute availability report" in html
+        assert "Compute Availability Report" in html
 
     def test_contains_fleet_availability(self, sample_report_data):
         html = generate_html_report(**sample_report_data)

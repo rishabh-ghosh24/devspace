@@ -390,15 +390,27 @@ def discover_compartments(identity_client, compartment_id):
     # compartment_map stores {ocid: {"name": str, "parent_id": str}}
     compartment_map = {compartment_id: {"name": root_name, "parent_id": None}}
 
-    # List all sub-compartments recursively
+    # List sub-compartments recursively
+    # Note: compartment_id_in_subtree=True only works when compartment_id is a
+    # tenancy root OCID. For non-root compartments, list direct children and
+    # recurse manually.
     try:
-        sub_compartments = oci.pagination.list_call_get_all_results(
-            identity_client.list_compartments,
-            compartment_id,
-            compartment_id_in_subtree=True,
-            access_level="ACCESSIBLE",
-            lifecycle_state="ACTIVE",
-        ).data
+        if is_tenancy_ocid(compartment_id):
+            sub_compartments = oci.pagination.list_call_get_all_results(
+                identity_client.list_compartments,
+                compartment_id,
+                compartment_id_in_subtree=True,
+                access_level="ACCESSIBLE",
+                lifecycle_state="ACTIVE",
+            ).data
+        else:
+            # For non-root: list direct children only (no subtree flag)
+            sub_compartments = oci.pagination.list_call_get_all_results(
+                identity_client.list_compartments,
+                compartment_id,
+                access_level="ACCESSIBLE",
+                lifecycle_state="ACTIVE",
+            ).data
         for c in sub_compartments:
             compartment_map[c.id] = {"name": c.name, "parent_id": c.compartment_id}
     except oci.exceptions.ServiceError as e:
@@ -891,7 +903,7 @@ td.center {{ text-align: center; }}
 
     parts.append(f"""<div class="header">
 <div>
-<h1>Compute availability report</h1>
+<h1>Compute Availability Report</h1>
 <div class="header-meta">
 <span>Compartment: <strong>{compartment_name}</strong></span>
 <span>Region: <strong>{region}</strong></span>
