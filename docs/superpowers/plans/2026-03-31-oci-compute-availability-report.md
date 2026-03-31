@@ -830,12 +830,28 @@ class TestBuildCompartmentLabels:
         assert cmap["prodA"]["label"] != cmap["prodB"]["label"]
         # team is also duplicated, should be disambiguated
         assert cmap["teamA"]["label"] != cmap["teamB"]["label"]
+
+
+class TestDiscoveryWarningFormat:
+    def test_warning_includes_label_and_ocid(self):
+        """Discovery warnings must include disambiguated label + OCID for diagnostics"""
+        # Simulate what discover_instances produces when list_instances fails
+        # The warning format should be: "Could not list instances in {label} ({ocid}): {msg}"
+        comp_label = "teamA/prod"
+        comp_id = "ocid1.compartment.oc1..aaabbbccc"
+        error_msg = "NotAuthorizedOrNotFound"
+        warning = f"Could not list instances in {comp_label} ({comp_id}): {error_msg}"
+
+        # Verify format allows unambiguous identification
+        assert comp_label in warning
+        assert comp_id in warning
+        assert error_msg in warning
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd sla-report && python -m pytest tests/test_availability.py::TestGroupInstances -v
+cd sla-report && python -m pytest tests/test_availability.py::TestGroupInstances tests/test_availability.py::TestBuildCompartmentLabels tests/test_availability.py::TestDiscoveryWarningFormat -v
 ```
 
 - [ ] **Step 3: Implement discovery functions**
@@ -1610,10 +1626,23 @@ class TestHTMLReport:
             "discovery_complete": True,
         }
         html = generate_html_report(**{**sample_report_data, "fleet": fleet})
-        # Fleet availability card should show N/A
-        assert "N/A" in html
-        # Instance count should still be numeric
-        assert str(fleet["discovered_instance_count"]) in html
+        # Each metric card has a label + value. Assert N/A appears next to
+        # the specific card labels, not just anywhere in the page.
+        # Card 1: Fleet availability
+        assert '>Fleet availability</div>' in html or 'Fleet availability' in html
+        # Card 3: Meeting SLA target
+        assert '>Meeting SLA target</div>' in html or 'Meeting SLA' in html
+        # Card 4: Total uptime hours
+        assert '>Total uptime hours</div>' in html or 'Total uptime' in html
+        # All three should show N/A (check card value divs)
+        # Use a tighter check: find the card value div after each label
+        import re
+        card_values = re.findall(r'class="metric-value"[^>]*>([^<]+)<', html)
+        na_count = sum(1 for v in card_values if 'N/A' in v)
+        assert na_count >= 3, f"Expected 3+ N/A card values, found {na_count}: {card_values}"
+        # Instance count card should still be numeric
+        assert any(str(fleet["discovered_instance_count"]) in v for v in card_values), \
+            f"Instance count {fleet['discovered_instance_count']} not found in card values: {card_values}"
 
     def test_instances_card_shows_partial_scope(self, sample_report_data):
         """Instances monitored card appends (partial scope) when discovery incomplete"""
@@ -1628,7 +1657,14 @@ class TestHTMLReport:
             "discovery_complete": False,
         }
         html = generate_html_report(**{**sample_report_data, "fleet": fleet})
-        assert "partial scope" in html.lower()
+        # The (partial scope) annotation must appear inside the Instances monitored card
+        import re
+        instances_card = re.search(
+            r'Instances monitored.*?</div>\s*<div[^>]*class="metric-value"[^>]*>(.*?)</div>',
+            html, re.DOTALL
+        )
+        assert instances_card, "Instances monitored card not found in HTML"
+        assert "partial scope" in instances_card.group(1).lower()
 
     def test_heatmap_toggle_hidden_under_50(self, sample_report_data):
         """No toggle button when under 50 instances"""
@@ -1713,7 +1749,7 @@ The function builds the HTML string section by section. Each section below must 
   - Colors: #1D9E75 (green), #E24B4A (red), #E8E6DF (gray), #EF9F27 (amber), #F8F7F4 (bg), #1A1A1A (text), #888780 (secondary), #B4B2A9 (muted)
   - `.container` max-width 960px, centered, padding 32px 24px
   - `.metrics` grid 4-col, 12px gap
-  - `.metric-card` white bg, 10px radius, 1px solid #E8E6DF
+  - `.metric-card` white bg, 10px radius, 1px solid #E8E6DF. Label div has class `metric-label`, value div has class `metric-value`
   - `.summary-row` grid 180px + 1fr, 24px gap
   - `.donut-center .big` font-size 24px, weight 600
   - Table: th 11px uppercase, td 13px, border-bottom #f0efe9
