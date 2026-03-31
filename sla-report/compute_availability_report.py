@@ -8,6 +8,7 @@ using CpuUtilization and instance_status metrics.
 import argparse
 import logging
 import math
+import os
 import sys
 from collections import OrderedDict
 from datetime import datetime, timezone, timedelta
@@ -667,6 +668,586 @@ def collect_all_metrics(monitoring_client, root_compartment_id, compartment_map,
                 failed_instance_ids.update(batch)
 
     return cpu_metrics, status_metrics, failed_instance_ids
+
+
+# Load Chart.js from bundled file
+_chart_js_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chart.min.js")
+try:
+    with open(_chart_js_path, "r") as _f:
+        CHART_JS = _f.read()
+except FileNotFoundError:
+    CHART_JS = "/* Chart.js not found */"
+
+
+def _aggregate_heatmap_block(statuses):
+    """Aggregate a list of hourly statuses into a single block status.
+
+    Rules:
+    - if ANY hour is 'nodata' -> nodata
+    - if ANY hour is 'down' -> down
+    - if ALL hours are 'stopped' -> stopped
+    - if mix of up + stopped -> up (instance was available when running)
+    - else -> up
+    """
+    if not statuses:
+        return "nodata"
+    if "nodata" in statuses:
+        return "nodata"
+    if "down" in statuses:
+        return "down"
+    if all(s == "stopped" for s in statuses):
+        return "stopped"
+    return "up"
+
+
+def _format_number(n):
+    """Format a number with comma separators."""
+    if n is None:
+        return "N/A"
+    return f"{n:,}"
+
+
+def generate_html_report(instances, fleet, heatmap_data, all_hours,
+                         compartment_name, region, days, sla_target,
+                         start_date, end_date, title=None, logo_data=None,
+                         discovery_warnings=None):
+    """Generate self-contained HTML availability report.
+
+    Args:
+        instances: list of instance dicts (with stats merged in)
+        fleet: fleet stats dict from compute_fleet_stats
+        heatmap_data: {instance_id: [status_per_bucket]} for heatmap blocks
+        all_hours: list of hourly bucket keys (ISO format)
+        compartment_name: root compartment display name
+        region: OCI region string
+        days: reporting period in days
+        sla_target: SLA target percentage
+        start_date: formatted start date string
+        end_date: formatted end date string
+        title: optional custom branding title (top-right)
+        logo_data: optional base64-encoded logo data URI
+        discovery_warnings: optional list of warning strings from discovery phase
+
+    Returns:
+        Complete HTML string
+    """
+    discovery_warnings = discovery_warnings or []
+    report_complete = fleet.get("report_complete", True)
+    data_complete = fleet.get("data_complete", True)
+    discovery_complete = fleet.get("discovery_complete", True)
+    show_warning = not report_complete or len(discovery_warnings) > 0
+
+    # Fleet values
+    fleet_pct = fleet.get("fleet_availability_pct")
+    at_target = fleet.get("at_target_count")
+    total_up = fleet.get("total_up_hours")
+    total_mon = fleet.get("total_monitored_hours")
+    inst_count = fleet.get("discovered_instance_count", len(instances))
+
+    # Format fleet availability for display
+    if fleet_pct is not None:
+        fleet_pct_str = f"{fleet_pct:.2f}%"
+        if fleet_pct >= sla_target:
+            fleet_color = "#0f6e56"
+        elif fleet_pct >= 99.0:
+            fleet_color = "#633806"
+        else:
+            fleet_color = "#a32d2d"
+    else:
+        fleet_pct_str = "N/A"
+        fleet_color = "#888780"
+
+    # Instances card value
+    if not discovery_complete:
+        inst_value = f"{inst_count} (partial scope)"
+    else:
+        inst_value = str(inst_count)
+
+    # Meeting SLA card
+    if at_target is not None:
+        sla_value = f"{at_target} / {inst_count}"
+    else:
+        sla_value = "N/A"
+
+    # Total uptime card
+    if total_up is not None and total_mon is not None:
+        uptime_value = f"{_format_number(total_up)} / {_format_number(total_mon)}"
+    else:
+        uptime_value = "N/A"
+
+    # Group instances by compartment
+    grouped = group_instances_by_compartment(instances)
+
+    # Heatmap resolution
+    block_hours, resolution_label = get_heatmap_resolution(days)
+
+    # Generation timestamp
+    gen_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    # --- Build HTML ---
+    parts = []
+
+    # Section A: DOCTYPE + HEAD
+    parts.append(f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compute Availability Report &mdash; {compartment_name}</title>
+<style>
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8f7f4; color: #1a1a1a; font-size: 14px; line-height: 1.5; }}
+.container {{ max-width: 960px; margin: 0 auto; padding: 32px 24px; }}
+.header {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 28px; }}
+.header h1 {{ font-size: 22px; font-weight: 600; margin-bottom: 4px; }}
+.header-meta {{ font-size: 13px; color: #6b6b6b; display: flex; gap: 16px; flex-wrap: wrap; }}
+.header-brand {{ text-align: right; font-size: 11px; color: #b4b2a9; }}
+.header-brand .brand-title {{ font-weight: 500; font-size: 12px; color: #888780; }}
+.metrics {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }}
+.metric-card {{ background: #fff; border-radius: 10px; padding: 16px 20px; border: 1px solid #e8e6df; }}
+.metric-label {{ font-size: 12px; color: #888780; margin-bottom: 4px; }}
+.metric-value {{ font-size: 24px; font-weight: 600; }}
+.section-title {{ font-size: 16px; font-weight: 600; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #e8e6df; color: #1a1a1a; }}
+.summary-row {{ display: grid; grid-template-columns: 180px 1fr; gap: 24px; margin-bottom: 32px; align-items: start; }}
+.donut-wrap {{ position: relative; width: 160px; height: 160px; margin: 0 auto; }}
+.donut-center {{ position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }}
+.donut-center .big {{ font-size: 24px; font-weight: 600; color: #1a1a1a; }}
+.donut-center .sub {{ font-size: 12px; color: #888780; }}
+.tbl-wrap {{ background: #fff; border-radius: 10px; border: 1px solid #e8e6df; overflow: hidden; }}
+.comp-header {{ background: #faf9f6; padding: 10px 16px; font-weight: 600; font-size: 12px; color: #1a1a1a; border-bottom: 1px solid #e8e6df; }}
+.comp-header + .comp-header {{ border-top: 2px solid #e8e6df; }}
+.comp-header .comp-count {{ color: #888780; font-weight: 400; }}
+.comp-header .comp-pct {{ color: #0f6e56; }}
+table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+th {{ text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #888780; padding: 10px 16px; background: #faf9f6; border-bottom: 1px solid #e8e6df; }}
+th.center {{ text-align: center; }}
+td {{ padding: 12px 16px; border-bottom: 1px solid #f0efe9; }}
+td.center {{ text-align: center; }}
+.dot {{ display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }}
+.dot-green {{ background: #1d9e75; }}
+.dot-red {{ background: #e24b4a; }}
+.dot-amber {{ background: #ef9f27; }}
+.badge {{ font-size: 11px; padding: 2px 10px; border-radius: 10px; font-weight: 500; }}
+.badge-ok {{ background: #e1f5ee; color: #085041; }}
+.badge-warn {{ background: #faeeda; color: #633806; }}
+.badge-bad {{ background: #fcebeb; color: #791f1f; }}
+.avail-bar {{ display: flex; height: 6px; border-radius: 3px; overflow: hidden; width: 120px; }}
+.bar-up {{ background: #1d9e75; }}
+.bar-down {{ background: #e24b4a; }}
+.bar-stopped {{ background: #e8e6df; }}
+.uptime-cell {{ display: flex; flex-direction: column; align-items: center; gap: 3px; }}
+.uptime-hours {{ font-size: 12px; color: #888780; }}
+.heatmap-section {{ margin-bottom: 32px; }}
+.heatmap-dates {{ font-size: 11px; color: #b4b2a9; margin-bottom: 8px; display: flex; margin-left: 252px; }}
+.heatmap-dates span {{ flex: 1; }}
+.heatmap-dates span:last-child {{ text-align: right; }}
+.heatmap-comp {{ font-size: 10px; font-weight: 600; color: #888780; text-transform: uppercase; letter-spacing: 0.5px; margin: 10px 0 4px; padding-left: 4px; }}
+.heatmap-comp:first-child {{ margin-top: 0; }}
+.heatmap-row {{ display: flex; align-items: center; margin-bottom: 4px; }}
+.heatmap-label {{ width: 200px; flex-shrink: 0; font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+.heatmap-pct {{ width: 52px; flex-shrink: 0; font-size: 12px; text-align: right; padding-right: 10px; font-weight: 500; }}
+.heatmap-blocks {{ display: flex; gap: 1px; flex: 1; }}
+.hblk {{ height: 24px; flex: 1; border-radius: 1.5px; cursor: pointer; }}
+.hblk-up {{ background: #1d9e75; }}
+.hblk-down {{ background: #e24b4a; }}
+.hblk-nodata {{ background: #e8e6df; }}
+.hblk-stopped {{ background: #e8e6df; }}
+.legend {{ display: flex; gap: 16px; align-items: center; font-size: 12px; color: #888780; margin: 12px 0 0; }}
+.legend-block {{ display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }}
+.tooltip {{ position: fixed; background: #2c2c2a; color: #fff; font-size: 11px; padding: 4px 8px; border-radius: 4px; display: none; pointer-events: none; z-index: 1000; white-space: nowrap; }}
+.hidden {{ display: none !important; }}
+.show-all-btn {{ background: #fff; border: 1px solid #e8e6df; border-radius: 6px; padding: 6px 14px; font-size: 12px; color: #888780; cursor: pointer; margin-top: 8px; }}
+.show-all-btn:hover {{ background: #faf9f6; }}
+.footer {{ margin-top: 40px; padding-top: 16px; border-top: 1px solid #e8e6df; font-size: 12px; color: #b4b2a9; display: flex; justify-content: space-between; }}
+@media print {{
+  body {{ background: #fff; }}
+  .container {{ max-width: 100%; padding: 16px; }}
+  .tooltip {{ display: none !important; }}
+  .show-all-btn {{ display: none !important; }}
+  .heatmap-hidden {{ display: flex !important; }}
+  .metric-card {{ border: 1px solid #ccc; }}
+  .tbl-wrap {{ border: 1px solid #ccc; }}
+}}
+</style>
+</head>
+<body>
+<div class="container">
+""")
+
+    # Section B: HEADER + DATA QUALITY BANNER
+    branding_html = ""
+    if title or logo_data:
+        brand_parts = []
+        if logo_data:
+            brand_parts.append(f'<img src="{logo_data}" alt="Logo" style="max-height:32px;margin-bottom:4px;">')
+        if title:
+            brand_parts.append(f'<div class="brand-title">{title}</div>')
+        branding_html = f'<div class="header-brand">{"".join(brand_parts)}</div>'
+
+    parts.append(f"""<div class="header">
+<div>
+<h1>Compute availability report</h1>
+<div class="header-meta">
+<span>Compartment: <strong>{compartment_name}</strong></span>
+<span>Region: <strong>{region}</strong></span>
+<span>Period: <strong>{start_date} &mdash; {end_date} ({days} days)</strong></span>
+<span>SLA target: <strong>{sla_target}%</strong></span>
+</div>
+</div>
+{branding_html}
+</div>
+""")
+
+    # Warning banner
+    if show_warning:
+        parts.append("""<div data-warning="true" style="background:#faeeda;border-left:4px solid #ef9f27;padding:12px 16px;border-radius:0 6px 6px 0;margin-bottom:20px;font-size:13px;color:#633806;display:flex;align-items:center;gap:8px;">
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;"><path d="M8 1L1 14h14L8 1z" stroke="#ef9f27" stroke-width="1.5" fill="#faeeda"/><text x="8" y="12" text-anchor="middle" font-size="10" font-weight="700" fill="#633806">!</text></svg>
+<span>Incomplete data: some metrics or compartments could not be queried. Affected availability values are shown as N/A.</span>
+</div>
+""")
+
+    # Section C: METRIC CARDS
+    parts.append(f"""<div class="metrics">
+<div class="metric-card">
+<div class="metric-label">Fleet availability</div>
+<div class="metric-value" style="color:{fleet_color};">{fleet_pct_str}</div>
+</div>
+<div class="metric-card">
+<div class="metric-label">Instances monitored</div>
+<div class="metric-value">{inst_value}</div>
+</div>
+<div class="metric-card">
+<div class="metric-label">Meeting SLA target</div>
+<div class="metric-value">{sla_value}</div>
+</div>
+<div class="metric-card">
+<div class="metric-label">Total uptime hours</div>
+<div class="metric-value">{uptime_value}</div>
+</div>
+</div>
+""")
+
+    # Section D: EXECUTIVE SUMMARY (donut + table)
+    # Donut values
+    donut_pct = fleet_pct if fleet_pct is not None else 0
+    donut_remainder = 100 - donut_pct if fleet_pct is not None else 100
+    donut_unavail_color = "#e24b4a" if donut_remainder > 0 else "#e8e6df"
+    donut_center_text = fleet_pct_str
+
+    parts.append(f"""<div class="section-title">Executive summary</div>
+<div class="summary-row">
+<div class="donut-wrap">
+<canvas id="donut" width="160" height="160"></canvas>
+<div class="donut-center">
+<div class="big">{donut_center_text}</div>
+<div class="sub">fleet uptime</div>
+</div>
+</div>
+<div class="tbl-wrap">
+""")
+
+    # Table header row (only first compartment gets the header)
+    first_comp = True
+    for comp_id, group in grouped.items():
+        comp_name = group["name"]
+        comp_instances = group["instances"]
+
+        # Compute compartment stats
+        comp_stats = compute_compartment_stats(comp_instances, sla_target)
+        comp_pct = comp_stats["compartment_availability_pct"]
+        comp_pct_str = f"{comp_pct:.2f}%" if comp_pct is not None else "N/A"
+        comp_pct_color = "#0f6e56" if comp_pct is not None and comp_pct >= sla_target else "#a32d2d"
+
+        # Compartment header
+        if not first_comp:
+            parts.append(f'<div class="comp-header" style="border-top:2px solid #e8e6df;">')
+        else:
+            parts.append('<div class="comp-header">')
+        parts.append(f'{comp_name} <span class="comp-count">({len(comp_instances)} instances)</span> &mdash; <span class="comp-pct" style="color:{comp_pct_color};">{comp_pct_str}</span>')
+        parts.append('</div>')
+
+        # Table
+        parts.append('<table>')
+        if first_comp:
+            parts.append("""<thead><tr>
+<th style="width:28%;">Instance</th>
+<th class="center" style="width:14%;">Status</th>
+<th style="width:14%;">Availability</th>
+<th class="center" style="width:30%;">Uptime</th>
+<th style="width:14%;">Downtime</th>
+</tr></thead>""")
+            first_comp = False
+
+        parts.append('<tbody>')
+        for inst in comp_instances:
+            name = inst["name"]
+            state = inst.get("state", "UNKNOWN")
+            avail = inst.get("availability_pct")
+            up_h = inst.get("up_hours", 0)
+            down_h = inst.get("down_hours", 0)
+            stopped_h = inst.get("stopped_hours", 0)
+            monitored_h = inst.get("monitored_hours", 0)
+            downtime_min = inst.get("downtime_minutes", 0)
+
+            # Dot color
+            if state == "RUNNING":
+                dot_cls = "dot-green"
+            elif state == "STOPPED":
+                dot_cls = "dot-red"
+            else:
+                dot_cls = "dot-amber"
+
+            # Badge
+            if state == "RUNNING":
+                badge_cls = "badge-ok"
+            elif state == "STOPPED":
+                badge_cls = "badge-bad"
+            else:
+                badge_cls = "badge-warn"
+
+            # Availability color
+            if avail is not None:
+                avail_str = f"{avail:.2f}%" if avail < 100 else "100%"
+                if avail >= sla_target:
+                    avail_color = "#0f6e56"
+                elif avail >= 99.0:
+                    avail_color = "#633806"
+                else:
+                    avail_color = "#a32d2d"
+            else:
+                avail_str = "N/A"
+                avail_color = "#888780"
+
+            # Uptime bar proportions
+            total_h = up_h + down_h + stopped_h
+            if total_h > 0:
+                up_pct = up_h / total_h * 100
+                down_pct = down_h / total_h * 100
+                stopped_pct = stopped_h / total_h * 100
+            else:
+                up_pct = 100
+                down_pct = 0
+                stopped_pct = 0
+
+            # Bar segments
+            bar_segments = []
+            if up_pct > 0:
+                bar_segments.append(f'<div class="bar-up" style="width:{up_pct:.1f}%;"></div>')
+            if down_pct > 0:
+                bar_segments.append(f'<div class="bar-down" style="width:{down_pct:.1f}%;"></div>')
+            if stopped_pct > 0:
+                bar_segments.append(f'<div class="bar-stopped" style="width:{stopped_pct:.1f}%;"></div>')
+
+            # Downtime color
+            dt_color = "#a32d2d" if downtime_min > 0 else "inherit"
+
+            parts.append(f"""<tr>
+<td><span class="dot {dot_cls}"></span>{name}</td>
+<td class="center"><span class="badge {badge_cls}">{state}</span></td>
+<td style="font-weight:600;color:{avail_color};">{avail_str}</td>
+<td class="center"><div class="uptime-cell"><span class="uptime-hours">{up_h}h</span><div class="avail-bar">{"".join(bar_segments)}</div></div></td>
+<td style="color:{dt_color};">{downtime_min} min</td>
+</tr>""")
+
+        parts.append('</tbody></table>')
+
+    parts.append('</div></div>')  # close tbl-wrap and summary-row
+
+    # Section E: HEATMAP
+    parts.append('<div class="heatmap-section">')
+    parts.append('<div class="section-title">Hourly availability heatmap</div>')
+
+    # Date markers
+    if all_hours:
+        from datetime import datetime as _dt
+        first_hour = _dt.strptime(all_hours[0], "%Y-%m-%dT%H:%M:%SZ")
+        last_hour = _dt.strptime(all_hours[-1], "%Y-%m-%dT%H:%M:%SZ")
+        total_span = (last_hour - first_hour).days
+        date_labels = []
+        if total_span <= 7:
+            step = 1
+        elif total_span <= 14:
+            step = 2
+        elif total_span <= 30:
+            step = 5
+        else:
+            step = 7
+        d = first_hour
+        while d <= last_hour:
+            date_labels.append(d.strftime("%b %-d"))
+            d += timedelta(days=step)
+        if date_labels and _dt.strptime(all_hours[-1], "%Y-%m-%dT%H:%M:%SZ").strftime("%b %-d") != date_labels[-1]:
+            date_labels.append(last_hour.strftime("%b %-d"))
+
+        parts.append('<div class="heatmap-dates">')
+        for dl in date_labels:
+            parts.append(f'<span>{dl}</span>')
+        parts.append('</div>')
+
+    # Determine if we need the toggle (>50 instances)
+    total_instances = len(instances)
+    need_toggle = total_instances > 50
+
+    # Build heatmap rows grouped by compartment
+    heatmap_row_idx = 0
+    for comp_id, group in grouped.items():
+        comp_name = group["name"]
+        comp_instances = group["instances"]
+
+        parts.append(f'<div class="heatmap-comp">{comp_name}</div>')
+
+        for inst in comp_instances:
+            inst_id = inst["id"]
+            inst_name = inst["name"]
+            avail = inst.get("availability_pct")
+            statuses = heatmap_data.get(inst_id, [])
+
+            # Availability color for heatmap
+            if avail is not None:
+                pct_str = f"{avail:.1f}%" if avail < 100 else "100%"
+                if avail >= sla_target:
+                    pct_color = "#0f6e56"
+                elif avail >= 99.0:
+                    pct_color = "#633806"
+                else:
+                    pct_color = "#a32d2d"
+            else:
+                pct_str = "N/A"
+                pct_color = "#888780"
+
+            # Determine if this row should be hidden (>50 instances, above SLA)
+            row_hidden = ""
+            if need_toggle:
+                if avail is not None and avail >= sla_target:
+                    row_hidden = " heatmap-hidden hidden"
+
+            # Aggregate blocks
+            blocks = []
+            num_buckets = len(statuses)
+            for b_start in range(0, num_buckets, block_hours):
+                chunk = statuses[b_start:b_start + block_hours]
+                agg = _aggregate_heatmap_block(chunk)
+                blk_cls = f"hblk hblk-{agg}"
+                # Data attributes for tooltip
+                if b_start < len(all_hours):
+                    hour_key = all_hours[b_start]
+                else:
+                    hour_key = ""
+                blocks.append(f'<div class="{blk_cls}" data-name="{inst_name}" data-hour="{hour_key}" data-status="{agg}"></div>')
+
+            parts.append(f'<div class="heatmap-row{row_hidden}">')
+            parts.append(f'<div class="heatmap-label">{inst_name}</div>')
+            parts.append(f'<div class="heatmap-pct" style="color:{pct_color};">{pct_str}</div>')
+            parts.append(f'<div class="heatmap-blocks">{"".join(blocks)}</div>')
+            parts.append('</div>')
+            heatmap_row_idx += 1
+
+    # Toggle button
+    if need_toggle:
+        parts.append('<button class="show-all-btn" id="show-all-toggle">Show all</button>')
+
+    # Legend
+    parts.append(f"""<div class="legend">
+<span><span class="legend-block" style="background:#1d9e75;"></span> Available</span>
+<span><span class="legend-block" style="background:#e24b4a;"></span> Unavailable</span>
+<span><span class="legend-block" style="background:#e8e6df;"></span> No data / stopped</span>
+<span style="margin-left:auto;font-size:11px;">Each block = {resolution_label}</span>
+</div>
+""")
+
+    parts.append('</div>')  # close heatmap-section
+
+    # Section F: TOOLTIP + FOOTER
+    parts.append('<div class="tooltip" id="tooltip"></div>')
+    parts.append(f"""<div class="footer">
+<span>Generated: {gen_time}</span>
+<span>OCI Compute Availability Report v{VERSION}</span>
+</div>
+""")
+
+    parts.append('</div>')  # close container
+
+    # Section G: JAVASCRIPT
+    # Embed Chart.js inline
+    parts.append(f'<script>{CHART_JS}</script>')
+
+    # Donut chart initialization
+    parts.append(f"""<script>
+(function() {{
+  var ctx = document.getElementById('donut');
+  if (ctx) {{
+    new Chart(ctx, {{
+      type: 'doughnut',
+      data: {{
+        datasets: [{{
+          data: [{donut_pct}, {donut_remainder}],
+          backgroundColor: ['#1d9e75', '{donut_unavail_color}'],
+          borderWidth: 0
+        }}]
+      }},
+      options: {{
+        responsive: false,
+        cutout: '74%',
+        plugins: {{ legend: {{ display: false }}, tooltip: {{ enabled: false }} }},
+        animation: {{ animateRotate: true, duration: 600 }}
+      }}
+    }});
+  }}
+}})();
+</script>
+""")
+
+    # Heatmap tooltip JS
+    parts.append("""<script>
+(function() {
+  var tip = document.getElementById('tooltip');
+  if (!tip) return;
+  var statusLabels = {'up': 'Available', 'down': 'Unavailable', 'nodata': 'No data', 'stopped': 'Stopped'};
+  document.querySelectorAll('.hblk').forEach(function(el) {
+    el.addEventListener('mouseenter', function(e) {
+      var name = el.getAttribute('data-name') || '';
+      var hour = el.getAttribute('data-hour') || '';
+      var status = el.getAttribute('data-status') || '';
+      var label = statusLabels[status] || status;
+      var dateStr = '';
+      if (hour) {
+        var d = new Date(hour);
+        dateStr = d.toISOString().split('T')[0] + ' ' + d.getUTCHours() + ':00 UTC';
+      }
+      tip.textContent = name + ' \\u2014 ' + dateStr + ' \\u2014 ' + label;
+      tip.style.display = 'block';
+    });
+    el.addEventListener('mousemove', function(e) {
+      tip.style.left = (e.clientX + 12) + 'px';
+      tip.style.top = (e.clientY - 20) + 'px';
+    });
+    el.addEventListener('mouseleave', function() {
+      tip.style.display = 'none';
+    });
+  });
+})();
+</script>
+""")
+
+    # HEAT-9 toggle JS
+    if need_toggle:
+        parts.append("""<script>
+(function() {
+  var btn = document.getElementById('show-all-toggle');
+  if (!btn) return;
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.heatmap-hidden').forEach(function(el) {
+      el.classList.toggle('hidden');
+    });
+    this.textContent = this.textContent === 'Show all' ? 'Show below SLA only' : 'Show all';
+  });
+})();
+</script>
+""")
+
+    parts.append('</body>\n</html>')
+
+    return "".join(parts)
 
 
 if __name__ == "__main__":
