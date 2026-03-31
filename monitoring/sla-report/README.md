@@ -46,7 +46,7 @@ python3 -m pytest tests/ -v
 ## Quick start — generating reports
 
 ```bash
-cd ~/devspace/sla-report
+cd ~/devspace/monitoring/sla-report
 
 # Generate a 7-day report using OCI config file auth
 python3 compute_availability_report.py \
@@ -329,7 +329,7 @@ terraform apply
 
 ```bash
 pip3 install --user pytest
-cd ~/devspace/sla-report
+cd ~/devspace/monitoring/sla-report
 python3 -m pytest tests/ -v
 ```
 
@@ -374,7 +374,7 @@ Your IAM policies are missing or incorrect. Verify:
 The file `chart.min.js` must be in the same directory as `compute_availability_report.py`. If missing:
 
 ```bash
-cd ~/devspace/sla-report
+cd ~/devspace/monitoring/sla-report
 curl -sL "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" -o chart.min.js
 ```
 
