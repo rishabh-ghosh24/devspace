@@ -7,8 +7,10 @@ using CpuUtilization and instance_status metrics.
 
 import argparse
 import logging
+import math
 import sys
 from collections import OrderedDict
+from datetime import datetime, timezone, timedelta
 
 try:
     import oci
@@ -461,6 +463,177 @@ def group_instances_by_compartment(instances):
         ))
 
     return OrderedDict(sorted(groups.items(), key=lambda x: x[1]["name"]))
+
+
+DATAPOINT_LIMIT = 80_000  # safety margin below 100K API limit
+
+
+def build_hourly_buckets(start_time, end_time):
+    """Build list of hourly bucket keys (ISO format, UTC) for the reporting period."""
+    buckets = []
+    current = start_time
+    while current < end_time:
+        buckets.append(current.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        current += timedelta(hours=1)
+    return buckets
+
+
+def calculate_batch_groups(instance_ids, hours):
+    """Split instance IDs into batches to stay under API data point limit.
+
+    Args:
+        instance_ids: list of instance OCIDs
+        hours: number of hourly buckets in the reporting period
+
+    Returns:
+        list of lists, each sub-list is a batch of instance IDs
+    """
+    if not instance_ids:
+        return []
+
+    max_per_batch = max(1, DATAPOINT_LIMIT // hours)
+    batches = []
+    for i in range(0, len(instance_ids), max_per_batch):
+        batches.append(instance_ids[i:i + max_per_batch])
+    return batches
+
+
+def is_tenancy_ocid(ocid):
+    """Check if an OCID is a tenancy root OCID."""
+    return ocid.startswith("ocid1.tenancy.")
+
+
+def collect_metrics(monitoring_client, compartment_id, namespace, metric_name,
+                    start_time, end_time, use_subtree=False, instance_ids=None):
+    """Query SummarizeMetricsData for a metric across instances.
+
+    Args:
+        monitoring_client: OCI MonitoringClient
+        compartment_id: compartment OCID for the query
+        namespace: metric namespace (e.g. "oci_computeagent")
+        metric_name: metric name (e.g. "CpuUtilization")
+        start_time: datetime, start of reporting window
+        end_time: datetime, end of reporting window
+        use_subtree: only set True when compartment_id is tenancy root OCID
+        instance_ids: optional list of instance OCIDs to filter by
+
+    Returns:
+        (metrics_dict, failed) tuple:
+        - metrics_dict: {instance_ocid: {hour_key: value}}
+        - failed: bool, True if the API call failed
+    """
+    if instance_ids:
+        resource_filter = " || ".join(
+            f'resourceId = "{rid}"' for rid in instance_ids
+        )
+        query = f"{metric_name}[1h]{{{resource_filter}}}.max()"
+    else:
+        query = f"{metric_name}[1h].max()"
+
+    try:
+        result = monitoring_client.summarize_metrics_data(
+            compartment_id,
+            oci.monitoring.models.SummarizeMetricsDataDetails(
+                namespace=namespace,
+                query=query,
+                start_time=start_time.isoformat(),
+                end_time=end_time.isoformat(),
+                resolution="1h",
+            ),
+            compartment_id_in_subtree=use_subtree,
+        ).data
+    except Exception as e:
+        log.warning(f"Metric query failed for {namespace}/{metric_name} "
+                    f"in {compartment_id}: {e}")
+        return {}, True  # Return failure flag
+
+    # Parse results: group data points by resourceId
+    metrics_by_instance = {}
+    for metric_data in result:
+        resource_id = metric_data.dimensions.get("resourceId") if metric_data.dimensions else None
+        if not resource_id:
+            continue
+
+        if resource_id not in metrics_by_instance:
+            metrics_by_instance[resource_id] = {}
+
+        for dp in metric_data.aggregated_datapoints:
+            hour_key = dp.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+            metrics_by_instance[resource_id][hour_key] = dp.value
+
+    return metrics_by_instance, False
+
+
+def collect_all_metrics(monitoring_client, root_compartment_id, compartment_map,
+                        instances, start_time, end_time):
+    """Collect CpuUtilization and instance_status for all instances.
+
+    Query strategy:
+    - If root_compartment_id is tenancy OCID: single query with subtree=True
+    - Otherwise: per-compartment queries with subtree=False
+
+    Returns:
+        (cpu_metrics, status_metrics, failed_instance_ids) where:
+        - cpu_metrics: {instance_ocid: {hour_key: value}}
+        - status_metrics: {instance_ocid: {hour_key: value}}
+        - failed_instance_ids: set of instance OCIDs where metric queries failed
+    """
+    hours = int((end_time - start_time).total_seconds() / 3600)
+    cpu_metrics = {}
+    status_metrics = {}
+    failed_instance_ids = set()
+
+    use_subtree = is_tenancy_ocid(root_compartment_id)
+
+    if use_subtree:
+        # Tenancy-wide: single query with subtree
+        scopes = [(root_compartment_id, True)]
+    else:
+        # Non-root: per-compartment queries
+        scopes = [(comp_id, False) for comp_id in compartment_map.keys()]
+
+    for comp_id, subtree in scopes:
+        # Determine instances in this scope for batching
+        if subtree:
+            scope_instance_ids = [inst["id"] for inst in instances]
+        else:
+            scope_instance_ids = [inst["id"] for inst in instances
+                                  if inst["compartment_id"] == comp_id]
+        if not scope_instance_ids:
+            continue
+
+        batches = calculate_batch_groups(scope_instance_ids, hours)
+
+        for batch in batches:
+            log.info(f"Querying metrics for batch of {len(batch)} instances "
+                     f"in {comp_id[:30]}...")
+
+            # CpuUtilization
+            batch_cpu, cpu_failed = collect_metrics(
+                monitoring_client, comp_id,
+                "oci_computeagent", "CpuUtilization",
+                start_time, end_time,
+                use_subtree=subtree,
+                instance_ids=batch if len(batches) > 1 else None,
+            )
+            cpu_metrics.update(batch_cpu)
+
+            # instance_status
+            batch_status, status_failed = collect_metrics(
+                monitoring_client, comp_id,
+                "oci_compute_infrastructure_health", "instance_status",
+                start_time, end_time,
+                use_subtree=subtree,
+                instance_ids=batch if len(batches) > 1 else None,
+            )
+            status_metrics.update(batch_status)
+
+            if cpu_failed or status_failed:
+                # Mark specific instances in this batch as failed,
+                # not the whole compartment -- preserves successful batches
+                failed_instance_ids.update(batch)
+
+    return cpu_metrics, status_metrics, failed_instance_ids
 
 
 if __name__ == "__main__":

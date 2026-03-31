@@ -1,8 +1,9 @@
 import pytest
 import sys
 from unittest.mock import patch
+from datetime import datetime, timezone, timedelta
 
-from compute_availability_report import classify_hour
+from compute_availability_report import classify_hour, calculate_batch_groups, build_hourly_buckets
 
 
 # Tests for parse_args function
@@ -372,6 +373,92 @@ class TestBuildCompartmentLabels:
         assert cmap["prodA"]["label"] != cmap["prodB"]["label"]
         # team is also duplicated, should be disambiguated
         assert cmap["teamA"]["label"] != cmap["teamB"]["label"]
+
+
+class TestBatching:
+    def test_small_fleet_single_batch(self):
+        instance_ids = [f"ocid{i}" for i in range(50)]
+        batches = calculate_batch_groups(instance_ids, hours=168)
+        assert len(batches) == 1
+        assert len(batches[0]) == 50
+
+    def test_large_fleet_90_days_multiple_batches(self):
+        instance_ids = [f"ocid{i}" for i in range(100)]
+        batches = calculate_batch_groups(instance_ids, hours=2160)
+        # 100 * 2160 = 216,000 > 80,000. 80000/2160 = ~37 per batch
+        assert len(batches) >= 3
+        # All instances covered
+        all_ids = [id for batch in batches for id in batch]
+        assert len(all_ids) == 100
+
+
+class TestHourlyBuckets:
+    def test_7_day_buckets(self):
+        end = datetime(2026, 3, 31, 0, 0, 0, tzinfo=timezone.utc)
+        start = end - timedelta(days=7)
+        buckets = build_hourly_buckets(start, end)
+        assert len(buckets) == 168
+
+    def test_bucket_format(self):
+        end = datetime(2026, 3, 31, 0, 0, 0, tzinfo=timezone.utc)
+        start = end - timedelta(days=1)
+        buckets = build_hourly_buckets(start, end)
+        assert buckets[0] == "2026-03-30T00:00:00Z"
+        assert buckets[-1] == "2026-03-30T23:00:00Z"
+        assert len(buckets) == 24
+
+
+class TestBuildAvailabilityMatrix:
+    def test_builds_matrix_from_metrics(self):
+        from compute_availability_report import build_availability_matrix
+        hourly_buckets = ["h0", "h1", "h2", "h3"]
+        cpu_metrics = {
+            "inst1": {"h0": 5.0, "h1": 10.0, "h2": 2.0},  # h3 missing
+        }
+        status_metrics = {
+            "inst1": {"h0": 0, "h1": 0, "h2": 1, "h3": 1},
+        }
+        matrix = build_availability_matrix(
+            ["inst1"], hourly_buckets, cpu_metrics, status_metrics
+        )
+        assert matrix["inst1"]["h0"] == "up"      # cpu + status 0
+        assert matrix["inst1"]["h1"] == "up"      # cpu + status 0
+        assert matrix["inst1"]["h2"] == "down"    # cpu + status 1
+        assert matrix["inst1"]["h3"] == "down"    # no cpu + status 1
+
+    def test_no_data_is_stopped(self):
+        from compute_availability_report import build_availability_matrix
+        hourly_buckets = ["h0", "h1"]
+        cpu_metrics = {}
+        status_metrics = {}
+        matrix = build_availability_matrix(
+            ["inst1"], hourly_buckets, cpu_metrics, status_metrics
+        )
+        assert matrix["inst1"]["h0"] == "stopped"
+        assert matrix["inst1"]["h1"] == "stopped"
+
+    def test_failed_instance_ids_produce_nodata(self):
+        """Only instances in failed_instance_ids get nodata, others unaffected"""
+        from compute_availability_report import build_availability_matrix
+        hourly_buckets = ["h0", "h1"]
+        cpu_metrics = {
+            "inst2": {"h0": 5.0, "h1": 10.0},
+        }
+        status_metrics = {
+            "inst2": {"h0": 0, "h1": 0},
+        }
+        matrix = build_availability_matrix(
+            [{"id": "inst1", "compartment_id": "comp1"},
+             {"id": "inst2", "compartment_id": "comp1"}],
+            hourly_buckets, cpu_metrics, status_metrics,
+            failed_instance_ids={"inst1"},
+        )
+        # inst1 failed -> all nodata
+        assert matrix["inst1"]["h0"] == "nodata"
+        assert matrix["inst1"]["h1"] == "nodata"
+        # inst2 succeeded -> normal classification
+        assert matrix["inst2"]["h0"] == "up"
+        assert matrix["inst2"]["h1"] == "up"
 
 
 class TestDiscoveryWarningFormat:
