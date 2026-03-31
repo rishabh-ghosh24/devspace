@@ -55,6 +55,7 @@ def parse_args(argv=None):
     # Exclusions
     parser.add_argument("--exclude", nargs="*", default=[],
                         help="Instance names or OCIDs to exclude from the report")
+    parser.add_argument("--exclude-file", help="Path to file with instance names/OCIDs to exclude (one per line)")
 
     # Output
     parser.add_argument("--output", help="Output HTML file path")
@@ -1399,9 +1400,22 @@ def main():
     else:
         _, compartment_map, disc_warnings = discover_compartments(identity_client, args.compartment_id)
 
+    # Build exclusion list from --exclude and --exclude-file
+    exclude_list = list(args.exclude) if args.exclude else []
+    if args.exclude_file:
+        try:
+            with open(args.exclude_file, "r") as f:
+                for line in f:
+                    entry = line.strip()
+                    if entry and not entry.startswith("#"):
+                        exclude_list.append(entry)
+            log.info("Loaded %d exclusions from %s", len(exclude_list) - len(args.exclude or []), args.exclude_file)
+        except FileNotFoundError:
+            log.warning("Exclude file not found: %s", args.exclude_file)
+
     instances, inst_disc_warnings = discover_instances(
         compute_client, compartment_map, args.running_only,
-        exclude_list=args.exclude if args.exclude else None,
+        exclude_list=exclude_list if exclude_list else None,
     )
     disc_warnings.extend(inst_disc_warnings)
     if not instances:
