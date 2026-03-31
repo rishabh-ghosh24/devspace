@@ -116,6 +116,39 @@ def classify_hour(has_cpu, instance_status, query_failed=False):
     return "stopped"
 
 
+def build_availability_matrix(instances, hourly_buckets, cpu_metrics, status_metrics,
+                               failed_instance_ids=None):
+    """Build availability matrix from metric data.
+
+    Args:
+        instances: list of instance dicts (need id) or list of instance ID strings
+        hourly_buckets: list of hour keys (ISO format strings)
+        cpu_metrics: {instance_id: {hour_key: value}} from CpuUtilization
+        status_metrics: {instance_id: {hour_key: value}} from instance_status
+        failed_instance_ids: set of instance OCIDs where metric queries failed
+
+    Returns:
+        {instance_id: {hour_key: "up"|"down"|"stopped"|"nodata"}}
+    """
+    failed_instance_ids = failed_instance_ids or set()
+    matrix = {}
+    for inst in instances:
+        inst_id = inst["id"] if isinstance(inst, dict) else inst
+        query_failed = inst_id in failed_instance_ids
+
+        inst_cpu = cpu_metrics.get(inst_id, {})
+        inst_status = status_metrics.get(inst_id, {})
+        hourly = {}
+        for hour in hourly_buckets:
+            has_cpu = hour in inst_cpu
+            status_val = inst_status.get(hour)
+            if status_val is not None:
+                status_val = int(status_val)
+            hourly[hour] = classify_hour(has_cpu, status_val, query_failed=query_failed)
+        matrix[inst_id] = hourly
+    return matrix
+
+
 def compute_instance_stats(hourly_statuses):
     """Compute availability stats from hourly classification dict.
 
