@@ -852,7 +852,7 @@ body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans
 .comp-section + .comp-section {{ border-top: 2px solid #e8e6df; }}
 .comp-header {{ background: #faf9f6; padding: 10px 16px; font-weight: 600; font-size: 12px; color: #1a1a1a; border-bottom: 1px solid #e8e6df; cursor: pointer; list-style: none; }}
 .comp-header::-webkit-details-marker {{ display: none; }}
-.comp-header::before {{ content: "\25BC"; font-size: 10px; margin-right: 8px; color: #888780; display: inline-block; transition: transform 0.2s; }}
+.comp-header::before {{ content: ""; display: inline-block; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #888780; margin-right: 8px; vertical-align: middle; transition: transform 0.2s; }}
 details:not([open]) > .comp-header::before {{ transform: rotate(-90deg); }}
 .comp-header .comp-count {{ color: #888780; font-weight: 400; }}
 .comp-header .comp-pct {{ color: #0f6e56; }}
