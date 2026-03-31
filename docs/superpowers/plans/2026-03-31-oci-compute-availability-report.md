@@ -810,6 +810,26 @@ class TestBuildCompartmentLabels:
         assert cmap["c2"]["label"] == "teamB/prod"
         # Non-duplicated names stay simple
         assert cmap["teamA"]["label"] == "teamA"
+
+    def test_deep_duplicates_walk_ancestors(self):
+        """orgA/team/prod vs orgB/team/prod — parent 'team' is also duplicated"""
+        from compute_availability_report import build_compartment_labels
+        cmap = {
+            "root": {"name": "tenancy", "parent_id": None},
+            "orgA": {"name": "orgA", "parent_id": "root"},
+            "orgB": {"name": "orgB", "parent_id": "root"},
+            "teamA": {"name": "team", "parent_id": "orgA"},
+            "teamB": {"name": "team", "parent_id": "orgB"},
+            "prodA": {"name": "prod", "parent_id": "teamA"},
+            "prodB": {"name": "prod", "parent_id": "teamB"},
+        }
+        build_compartment_labels(cmap)
+        # Must disambiguate beyond just team/prod since 'team' is also duplicated
+        assert "orgA" in cmap["prodA"]["label"]
+        assert "orgB" in cmap["prodB"]["label"]
+        assert cmap["prodA"]["label"] != cmap["prodB"]["label"]
+        # team is also duplicated, should be disambiguated
+        assert cmap["teamA"]["label"] != cmap["teamB"]["label"]
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -865,24 +885,76 @@ def discover_compartments(identity_client, compartment_id):
     return root_name, compartment_map, discovery_warnings
 
 
+def _build_ancestor_path(compartment_map, comp_id, max_depth=10):
+    """Build full ancestor path for a compartment: grandparent/parent/name."""
+    parts = []
+    current = comp_id
+    for _ in range(max_depth):
+        info = compartment_map.get(current)
+        if not info:
+            break
+        parts.append(info["name"])
+        if not info.get("parent_id") or info["parent_id"] not in compartment_map:
+            break
+        current = info["parent_id"]
+    parts.reverse()
+    return "/".join(parts)
+
+
 def build_compartment_labels(compartment_map):
     """Add a 'label' key to each compartment entry.
 
-    If a compartment name is unique, label = name.
-    If duplicate names exist, label = parent/name path for those duplicates.
-    """
-    # Detect duplicate names
-    name_counts = {}
-    for info in compartment_map.values():
-        name_counts[info["name"]] = name_counts.get(info["name"], 0) + 1
+    Algorithm:
+    1. Start with label = name for all compartments
+    2. Find groups of compartments that share the same label
+    3. For each collision group, prepend one more ancestor to each label
+    4. Repeat until all labels are unique, or fall back to full path
 
+    This handles arbitrarily deep duplicates:
+    - orgA/team/prod vs orgB/team/prod (not just parent/prod)
+    """
+    # Initialize labels with just the name
     for comp_id, info in compartment_map.items():
-        if name_counts[info["name"]] > 1 and info["parent_id"]:
-            parent = compartment_map.get(info["parent_id"])
-            parent_name = parent["name"] if parent else "unknown"
-            info["label"] = f"{parent_name}/{info['name']}"
-        else:
-            info["label"] = info["name"]
+        info["_path_parts"] = [info["name"]]
+        info["_current_id"] = comp_id
+        info["label"] = info["name"]
+
+    # Iteratively disambiguate until all labels are unique (max 10 levels)
+    for _ in range(10):
+        # Find label collisions
+        label_groups = {}
+        for comp_id, info in compartment_map.items():
+            label_groups.setdefault(info["label"], []).append(comp_id)
+
+        collisions = {label: ids for label, ids in label_groups.items() if len(ids) > 1}
+        if not collisions:
+            break
+
+        # For each collision group, prepend one more ancestor
+        for label, comp_ids in collisions.items():
+            for comp_id in comp_ids:
+                info = compartment_map[comp_id]
+                # Walk up to next ancestor not yet in the path
+                current = comp_id
+                for _ in range(len(info["_path_parts"])):
+                    parent_id = compartment_map.get(current, {}).get("parent_id")
+                    if not parent_id or parent_id not in compartment_map:
+                        break
+                    current = parent_id
+                parent_info = compartment_map.get(current)
+                if parent_info and parent_info["name"] not in info["_path_parts"]:
+                    info["_path_parts"].insert(0, parent_info["name"])
+                else:
+                    # Fall back to full path if we can't disambiguate further
+                    info["_path_parts"] = _build_ancestor_path(
+                        compartment_map, comp_id
+                    ).split("/")
+                info["label"] = "/".join(info["_path_parts"])
+
+    # Clean up temporary keys
+    for info in compartment_map.values():
+        info.pop("_path_parts", None)
+        info.pop("_current_id", None)
 
 
 def discover_instances(compute_client, compartment_map, running_only=False):
@@ -913,7 +985,7 @@ def discover_instances(compute_client, compartment_map, running_only=False):
                 comp_id,
             ).data
         except oci.exceptions.ServiceError as e:
-            msg = f"Could not list instances in {comp_name}: {e.message}"
+            msg = f"Could not list instances in {comp_label} ({comp_id}): {e.message}"
             log.warning(msg)
             discovery_warnings.append(msg)
             continue
@@ -1524,6 +1596,39 @@ class TestHTMLReport:
             discovery_warnings=["Could not list instances in staging"],
         )
         assert "data-warning" in html
+
+    def test_cards_show_na_when_report_incomplete(self, sample_report_data):
+        """Fleet availability, Meeting SLA, and Total uptime cards show N/A"""
+        fleet = {
+            **sample_report_data["fleet"],
+            "fleet_availability_pct": None,
+            "at_target_count": None,
+            "total_up_hours": None,
+            "total_monitored_hours": None,
+            "report_complete": False,
+            "data_complete": False,
+            "discovery_complete": True,
+        }
+        html = generate_html_report(**{**sample_report_data, "fleet": fleet})
+        # Fleet availability card should show N/A
+        assert "N/A" in html
+        # Instance count should still be numeric
+        assert str(fleet["discovered_instance_count"]) in html
+
+    def test_instances_card_shows_partial_scope(self, sample_report_data):
+        """Instances monitored card appends (partial scope) when discovery incomplete"""
+        fleet = {
+            **sample_report_data["fleet"],
+            "fleet_availability_pct": None,
+            "at_target_count": None,
+            "total_up_hours": None,
+            "total_monitored_hours": None,
+            "report_complete": False,
+            "data_complete": True,
+            "discovery_complete": False,
+        }
+        html = generate_html_report(**{**sample_report_data, "fleet": fleet})
+        assert "partial scope" in html.lower()
 
     def test_heatmap_toggle_hidden_under_50(self, sample_report_data):
         """No toggle button when under 50 instances"""
