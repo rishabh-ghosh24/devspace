@@ -84,7 +84,14 @@ def setup_auth(args):
         oci.config.validate_config(config)
         return config, None
     else:
-        signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+        try:
+            signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+        except Exception as e:
+            if "169.254.169.254" in str(e) or "ConnectTimeout" in str(e) or "timed out" in str(e):
+                log.error("Instance Principals auth failed — this only works on OCI compute instances.")
+                log.error("If running locally, use: --auth config --profile <PROFILE_NAME>")
+                sys.exit(1)
+            raise
         config = {"region": args.region} if args.region else {"region": signer.region}
         return config, signer
 
