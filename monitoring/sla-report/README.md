@@ -4,6 +4,8 @@ A single-file Python CLI tool that generates self-contained HTML availability re
 
 The tool queries two OCI Monitoring metrics (CpuUtilization and instance_status), computes per-instance, per-compartment, and fleet-level availability percentages, and renders an offline-capable HTML report with interactive charts and heatmaps.
 
+![Sample Report](examples/sample_report.png)
+
 ## Prerequisites
 
 - **OS:** Oracle Enterprise Linux 9 (OEL 9), Oracle Linux 8, or any Linux with Python 3.8+
