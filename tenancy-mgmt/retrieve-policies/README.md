@@ -14,6 +14,19 @@ The script uses OCI config profile auth and calls only read/list/get APIs:
 
 It does not create, update, or delete OCI resources.
 
+## Prerequisites
+
+- Python 3.10 or newer.
+- OCI Python SDK, installed from `requirements.txt`.
+- A working OCI API config profile in `~/.oci/config`, for example `DEFAULT`.
+- IAM permissions to inspect the tenancy, compartments, policies, and dynamic groups.
+
+The OCI CLI is not required by this script. It is only useful for setting up or checking your local OCI config, for example:
+
+```bash
+oci iam tenancy get --tenancy-id <tenancy_ocid> --profile DEFAULT
+```
+
 ## Configure Owners
 
 Create a local `owners.env` from the committed example:
