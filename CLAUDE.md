@@ -11,7 +11,7 @@ Multi-project OCI observability and tooling repo. Each top-level directory is an
 - **`logging/audit-log-masking/`** — OCI Function for audit log credential redaction
 - **`monitoring/sla-report/`** — Python CLI for OCI Compute Availability Reports (SLA compliance, HTML output)
 - **`monitoring/alarm-history-report/`** — OCI alarm history reporting
-- **`python-app-demo/`** — StayEasy Hotel Booking app (Quart/Hypercorn + Oracle ADB) for OCI APM demos
+- **`demo-apps/python-app-demo/`** — StayEasy Hotel Booking app (Quart/Hypercorn + Oracle ADB) for OCI APM demos
 
 ## OCI Logan MCP Server
 
